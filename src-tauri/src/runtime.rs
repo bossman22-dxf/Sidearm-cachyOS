@@ -158,7 +158,7 @@ impl RuntimeStore {
 
     /// The profile the runtime applied last: the manual override, else the one
     /// the last foreground resolution picked. `None` before any resolution.
-    #[cfg(target_os = "windows")]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub fn last_active_profile_id(&self) -> Option<&str> {
         self.manual_profile_override
             .as_deref()
