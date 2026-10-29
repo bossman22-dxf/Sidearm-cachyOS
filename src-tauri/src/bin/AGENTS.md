@@ -6,12 +6,13 @@ Small executables that must remain usable independently of the Tauri window, esp
 
 ## Ownership
 
-- `sidearm-recover.rs` — Linux onboard-memory backup, validation, and explicitly confirmed raw-record restoration.
+- `sidearm-recover.rs` — Linux onboard-memory backup, validation, explicitly confirmed raw-record restoration, and explicitly confirmed standard mapping.
 
 ## Local Contracts
 
 - Never require root. Report HID permission failures and direct the operator to narrow udev permissions.
-- Restore commands must require explicit interactive confirmation and must validate device identity, snapshot completeness, checksum, and every raw record before the first write.
+- Restore and mapping commands must require explicit interactive confirmation and must validate device identity, snapshot completeness, checksum, device mode, and every raw record before the first write.
+- A mapping operation must preserve the original device mode in the backup, switch to normal/onboard mode before writing, and attempt a full raw-record plus mode rollback if any mapping write fails.
 - Never replace an existing backup file.
 - Keep recovery operations independent of frontend state and configuration loading.
 
