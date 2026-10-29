@@ -15,6 +15,7 @@ Save it as `/etc/udev/rules.d/99-sidearm-naga.rules`, then reload rules and repl
 ```fish
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=hidraw
+sudo udevadm trigger --subsystem-match=input
 ```
 
 The first two rules grant access only to HID raw and evdev nodes belonging to the Naga V2 HyperSpeed receiver, and only through the active local user session. The evdev rule is needed for the thumb-keyboard collection; Sidearm grabs only that keyboard collection, not the pointer interface. The third rule grants the active session access to the virtual-input device used for Wayland key injection. None of these rules make nodes world-writable or grant Sidearm root privileges.
