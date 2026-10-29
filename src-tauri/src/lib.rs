@@ -2244,14 +2244,14 @@ async fn list_running_processes() -> Result<Vec<RunningProcessInfo>, CommandErro
         }
         #[cfg(target_os = "linux")]
         {
-            return crate::platform::shell::list_running_processes()
+            crate::platform::shell::list_running_processes()
                 .into_iter()
                 .map(|p| RunningProcessInfo {
                     exe: p.exe,
                     path: p.path,
                     pid: p.pid,
                 })
-                .collect();
+                .collect()
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
@@ -3164,16 +3164,9 @@ fn exe_icon_search_paths(exe_name: &str) -> Vec<String> {
     paths
 }
 
+#[cfg(target_os = "windows")]
 fn find_running_process_path(exe_name: &str) -> Option<String> {
-    #[cfg(target_os = "windows")]
-    return crate::platform::shell::find_running_process_path(exe_name);
-    #[cfg(target_os = "linux")]
-    return crate::platform::shell::find_running_process_path(exe_name);
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        let _ = exe_name;
-        return None;
-    }
+    crate::platform::shell::find_running_process_path(exe_name)
 }
 
 /// Migrate config from the old "com.nagaworkflowstudio.desktop" directory
