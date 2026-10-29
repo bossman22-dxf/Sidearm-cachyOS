@@ -2877,6 +2877,29 @@ fn onboard_backup_supported() -> bool {
 }
 
 /// Creates a lossless read-only backup of the connected Naga's onboard records.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_native_model() -> Result<device_catalog::NativeModelInfo, CommandError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let connected = linux_onboard_backup::LinuxOnboardDevice::open().is_ok();
+        device_catalog::NAGA_V2_HYPERSPEED.info(connected, false)
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("native model task failed: {e}")))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_mouse_settings() -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        linux_onboard_backup::LinuxOnboardDevice::open()
+            .and_then(|device| device.settings())
+            .map_err(|message| CommandError::new("onboard_device_unavailable", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("mouse settings task failed: {e}")))?
+}
+
 #[tauri::command]
 async fn create_onboard_backup(path: String) -> Result<(), CommandError> {
     #[cfg(target_os = "linux")]
