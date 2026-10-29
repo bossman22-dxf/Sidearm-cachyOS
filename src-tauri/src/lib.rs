@@ -3514,6 +3514,11 @@ pub fn run() {
             // One-time migration from old "com.nagaworkflowstudio.desktop" config dir.
             migrate_old_config(app.handle());
 
+            #[cfg(target_os = "linux")]
+            if let Ok(config_dir) = app.path().app_config_dir() {
+                platform::window::start_kde_focus_monitor(&config_dir);
+            }
+
             log::info!(
                 "[log-retention] sweep: deleted {deleted}, kept {kept} \
                  (max {LOG_RETENTION_DAYS}d / {LOG_RETENTION_MAX_FILES} files)"
