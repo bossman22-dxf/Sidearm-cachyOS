@@ -164,7 +164,7 @@ fn find_razer_naga_devices() -> Vec<std::path::PathBuf> {
         // interface and would leave the actual thumb keyboard uncaptured.
         let has_thumb_key_cluster = device.supported_keys().is_some_and(|keys| {
             (2u16..=13)
-                .filter(|code| evdev::Key::new(*code).is_some_and(|key| keys.contains(&key)))
+                .filter(|code| keys.contains(evdev::KeyCode::new(*code)))
                 .count()
                 >= 10
         });
