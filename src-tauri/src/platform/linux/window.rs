@@ -187,6 +187,9 @@ fn load_kwin_focus_script(script_path: &Path) -> Result<(), String> {
     let script_id: i32 = proxy
         .call("loadScript", &args)
         .map_err(|e| format!("KWin refused to load Sidearm's focus script: {e}"))?;
+    if script_id < 0 {
+        return Err("KWin returned an invalid script ID for Sidearm's focus monitor".into());
+    }
     let object_path = format!("/Scripting/Script{script_id}");
     let script_proxy = Proxy::new(
         &connection,
@@ -304,8 +307,8 @@ fn try_gnome_dbus() -> Option<RawWindowCapture> {
 
 /// Capture information about the current foreground window.
 ///
-/// On Wayland sessions, first tries the Sidearm GNOME Shell D-Bus extension.
-/// Falls back to `active_win_pos_rs::get_active_window` (XCB/X11).
+/// KDE Wayland reads the active window pushed by KWin scripting; GNOME Wayland
+/// uses the Sidearm GNOME extension; X11 uses the XCB active-window provider.
 pub(crate) fn capture_foreground_window() -> Result<RawWindowCapture, String> {
     // KDE Wayland does not expose active-window details through a readable
     // D-Bus property. The KWin script pushes changes into Sidearm's session
