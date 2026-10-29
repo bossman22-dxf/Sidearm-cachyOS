@@ -2900,6 +2900,30 @@ async fn get_mouse_settings() -> Result<linux_onboard_backup::LinuxMouseSettings
     .map_err(|e| CommandError::internal(format!("mouse settings task failed: {e}")))?
 }
 
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_mouse_dpi(dpi: u16) -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        linux_onboard_backup::LinuxOnboardDevice::open()
+            .and_then(|device| device.set_dpi(dpi))
+            .map_err(|message| CommandError::new("onboard_device_write_failed", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("mouse DPI task failed: {e}")))?
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_mouse_poll_rate(hz: u16) -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        linux_onboard_backup::LinuxOnboardDevice::open()
+            .and_then(|device| device.set_poll_rate_hz(hz))
+            .map_err(|message| CommandError::new("onboard_device_write_failed", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("mouse poll-rate task failed: {e}")))?
+}
+
 #[tauri::command]
 async fn create_onboard_backup(path: String) -> Result<(), CommandError> {
     #[cfg(target_os = "linux")]
