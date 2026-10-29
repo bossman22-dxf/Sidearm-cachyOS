@@ -36,6 +36,11 @@ const CMD_GET_DPI: u8 = 0x85;
 const NOSTORE: u8 = 0x00;
 const VARSTORE: u8 = 0x01;
 const CMD_SET_DPI: u8 = 0x05;
+const CMD_GET_MODE: u8 = 0x84;
+const CMD_SET_MODE: u8 = 0x04;
+const MODE_NORMAL: u8 = 0x00;
+const MODE_DRIVER: u8 = 0x03;
+const MODE_CONFIRM_ATTEMPTS: u32 = 4;
 const CMD_GET_BATTERY: u8 = 0x80;
 const BUSY_RETRIES: usize = 8;
 const SETTLE: Duration = Duration::from_millis(50);
@@ -161,6 +166,36 @@ impl LinuxOnboardDevice {
         Ok(())
     }
 
+    pub fn mode(&self) -> Result<u8, String> {
+        let reply = self.command(CLASS_CONTROL, CMD_GET_MODE, &[0x00, 0x00])?;
+        Ok(reply[8])
+    }
+
+    fn set_mode(&self, mode: u8) -> Result<(), String> {
+        self.command(CLASS_CONTROL, CMD_SET_MODE, &[mode, 0x00])?;
+        for attempt in 0..MODE_CONFIRM_ATTEMPTS {
+            if attempt > 0 {
+                thread::sleep(MODE_CONFIRM_WAIT);
+            }
+            match self.mode() {
+                Ok(actual) if actual == mode => return Ok(()),
+                Ok(actual) if actual == MODE_DRIVER && mode == MODE_NORMAL => {}
+                Ok(actual) => return Err(format!("mouse stayed in mode {actual:#04x} after requesting {mode:#04x}")),
+                Err(error) if attempt + 1 == MODE_CONFIRM_ATTEMPTS => return Err(error),
+                Err(_) => {}
+            }
+        }
+        Err("mouse did not confirm the requested device mode".into())
+    }
+
+    fn ensure_normal_mode(&self) -> Result<u8, String> {
+        let before = self.mode()?;
+        if before != MODE_NORMAL {
+            self.set_mode(MODE_NORMAL)?;
+        }
+        Ok(before)
+    }
+
     pub fn settings(&self) -> Result<LinuxMouseSettings, String> {
         let battery_reply = self.command(CLASS_POWER, CMD_GET_BATTERY, &[0x00, 0x00])?;
         Ok(LinuxMouseSettings {
@@ -240,6 +275,7 @@ impl LinuxOnboardDevice {
             dpi: self.dpi().ok(),
             poll_rate_hz: self.poll_rate_hz().ok(),
         };
+        let device_mode = self.mode().ok();
         let payload = SnapshotPayload {
             format: FORMAT_ID.into(),
             format_version: FORMAT_VERSION,
@@ -262,7 +298,7 @@ impl LinuxOnboardDevice {
 }
 
 fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
-    if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
+    if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 || payload.device_mode.is_none() {
         return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
     }
 
@@ -418,6 +454,7 @@ mod tests {
                 protocol: "razer-command-class-v1".into(),
             },
             settings: ReadableSettings { dpi: None, poll_rate_hz: None },
+            device_mode: Some(MODE_NORMAL),
             records,
             read_failures: vec![],
             scan_complete: true,
