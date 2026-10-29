@@ -2877,15 +2877,22 @@ fn onboard_backup_supported() -> bool {
 }
 
 /// Creates a lossless read-only backup of the connected Naga's onboard records.
-#[cfg(target_os = "linux")]
 #[tauri::command]
 async fn create_onboard_backup(path: String) -> Result<(), CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        linux_onboard_backup::backup_connected_mouse(std::path::Path::new(&path))
-            .map_err(|message| CommandError::new("onboard_backup_failed", message, None))
-    })
-    .await
-    .map_err(|e| CommandError::internal(format!("onboard backup task failed: {e}")))?
+    #[cfg(target_os = "linux")]
+    {
+        return tauri::async_runtime::spawn_blocking(move || {
+            linux_onboard_backup::backup_connected_mouse(std::path::Path::new(&path))
+                .map_err(|message| CommandError::new("onboard_backup_failed", message, None))
+        })
+        .await
+        .map_err(|e| CommandError::internal(format!("onboard backup task failed: {e}")))?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(CommandError::internal("Onboard memory backup is not available on this platform."))
+    }
 }
 
 /// Opens a new GitHub issue for a device report in the browser. The report
@@ -3761,7 +3768,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             export_verification_session,
             onboard_backup_supported,
-            #[cfg(target_os = "linux")]
             create_onboard_backup,
             load_config,
             save_config,
