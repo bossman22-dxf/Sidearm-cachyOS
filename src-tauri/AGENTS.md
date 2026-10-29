@@ -49,6 +49,6 @@ The Rust backend: low-level keyboard capture, Razer-encoding detection, action e
 ## Child DOX Index
 
 - `src/bin/AGENTS.md` — standalone recovery CLI contract.
-- `src-tauri/src/capture_backend/AGENTS.md` — LL keyboard hook + Razer encoding detection
-- `src-tauri/src/synapse_import/AGENTS.md` — Razer Synapse profile import
-- `src-tauri/src/platform/AGENTS.md` — OS-specific display/input/window/shell
+- `src/capture_backend/AGENTS.md` — LL keyboard hook + Razer encoding detection
+- `src/synapse_import/AGENTS.md` — Razer Synapse profile import
+- `src/platform/AGENTS.md` — OS-specific display/input/window/shell
