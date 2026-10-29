@@ -120,12 +120,20 @@ impl LinuxOnboardDevice {
     }
 
     pub fn set_dpi(&self, dpi: u16) -> Result<LinuxMouseSettings, String> {
+        self.set_dpi_in(dpi, VARSTORE)
+    }
+
+    fn set_dpi_live(&self, dpi: u16) -> Result<LinuxMouseSettings, String> {
+        self.set_dpi_in(dpi, NOSTORE)
+    }
+
+    fn set_dpi_in(&self, dpi: u16, storage: u8) -> Result<LinuxMouseSettings, String> {
         if !(100..=30_000).contains(&dpi) {
             return Err(format!("DPI {dpi} is outside 100..=30000"));
         }
         let [hi, lo] = dpi.to_be_bytes();
-        self.command(CLASS_DPI, CMD_SET_DPI, &[VARSTORE, hi, lo, hi, lo, 0x00, 0x00])?;
-        let read = self.dpi_in(VARSTORE)?;
+        self.command(CLASS_DPI, CMD_SET_DPI, &[storage, hi, lo, hi, lo, 0x00, 0x00])?;
+        let read = self.dpi_in(storage)?;
         if read != dpi {
             return Err(format!("mouse kept DPI {read} after a write of {dpi}"));
         }
@@ -366,7 +374,7 @@ pub fn apply_profile_mouse_settings(profile: &crate::config::Profile) {
                     return Ok(());
                 }
                 if let Some(value) = dpi {
-                    device.set_dpi(value)?;
+                    device.set_dpi_live(value)?;
                 }
                 if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
                     return Ok(());
