@@ -80,7 +80,7 @@ Default section order:
 
 ## Purpose
 
-Windows-first desktop app that remaps a programmable mouse (Razer Naga) and keyboard into per-app keyboard shortcuts, text snippets, macros, launches, and profile switching, with automatic profile switching on the foreground app. Dark theme only.
+Cross-platform desktop app that remaps a programmable mouse (Razer Naga) and keyboard into per-app keyboard shortcuts, text snippets, macros, launches, and profile switching, with automatic profile switching on the foreground app. Windows remains supported; native Linux on CachyOS/KDE Wayland is a primary port target. Dark theme only.
 
 ## Stack
 
@@ -117,4 +117,4 @@ Run before declaring a code change done:
 - `src/AGENTS.md` — React + TypeScript frontend (UI, pure logic, hooks, i18n)
 - `src-tauri/AGENTS.md` — Rust + Tauri backend (capture, execution, config, Synapse import, mouse onboard memory, platform)
 - `schemas/AGENTS.md` — the config JSON Schema contract (Rust ↔ schema ↔ TS)
-- `plans/onboard-memory/2026-10-16-findings.md` — investigation ledger for the mouse onboard-memory and raw-HID work: measured hardware/registry facts, REA state, open questions, and traps already paid for
+- `docs/LINUX-PORT-SAFETY-AND-ACCESSIBILITY.md` — required Linux mouse-backup/recovery safety gates and keyboard-accessibility acceptance criteria
