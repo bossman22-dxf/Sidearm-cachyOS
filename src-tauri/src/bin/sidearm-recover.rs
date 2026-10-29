@@ -51,8 +51,9 @@ fn main() -> ExitCode {
                 }
             }
             "--apply-sidearm-mapping" => {
-                println!("This will set the twelve thumb buttons to F13-F24 and keep the two side buttons as mouse buttons 4 and 5.");
-                println!("A complete matching backup is required; if a write fails, Sidearm will attempt rollback.");
+                println!("EXPERIMENTAL: this Linux mapping has not yet been validated on the physical mouse.");
+                println!("This switches the mouse to normal onboard mode, sets the twelve thumb buttons to F13-F24, and keeps M4/M5 as mouse buttons 4 and 5.");
+                println!("A fresh, complete matching backup is required; if a write fails, Sidearm will attempt record and mode rollback.");
                 println!("Type APPLY to continue:");
                 print!("> ");
                 if io::stdout().flush().is_err() {
