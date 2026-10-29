@@ -2879,6 +2879,13 @@ fn onboard_backup_supported() -> bool {
 /// Creates a lossless read-only backup of the connected Naga's onboard records.
 #[cfg(target_os = "linux")]
 #[tauri::command]
+fn get_mouse_status() -> Vec<serde_json::Value> {
+    // Linux does not use the Windows onboard takeover watchdog or its notices.
+    Vec::new()
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
 async fn get_native_model() -> Result<device_catalog::NativeModelInfo, CommandError> {
     tauri::async_runtime::spawn_blocking(|| {
         let connected = linux_onboard_backup::LinuxOnboardDevice::open().is_ok();
@@ -3884,6 +3891,7 @@ pub fn run() {
             apply_onboard_mapping,
             verify_onboard_mapping,
             restore_onboard_control,
+            get_mouse_status,
             get_native_model,
             get_device_report,
             open_device_report_issue,
