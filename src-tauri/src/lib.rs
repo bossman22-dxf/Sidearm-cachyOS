@@ -2882,7 +2882,9 @@ fn onboard_backup_supported() -> bool {
 async fn get_native_model() -> Result<device_catalog::NativeModelInfo, CommandError> {
     tauri::async_runtime::spawn_blocking(|| {
         let connected = linux_onboard_backup::LinuxOnboardDevice::open().is_ok();
-        device_catalog::NAGA_V2_HYPERSPEED.info(connected, false)
+        let mut info = device_catalog::NAGA_V2_HYPERSPEED.info(connected, false);
+        info.consumer_signals = None;
+        info
     })
     .await
     .map_err(|e| CommandError::internal(format!("native model task failed: {e}")))
