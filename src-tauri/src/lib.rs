@@ -2926,16 +2926,6 @@ fn open_startup_apps_settings() -> Result<(), CommandError> {
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
-async fn get_exe_icon(
-    exe_name: String,
-    process_path: Option<String>,
-) -> Result<Option<String>, CommandError> {
-    let _ = (exe_name, process_path);
-    Ok(None)
-}
-
-#[cfg(target_os = "linux")]
-#[tauri::command]
 fn get_mouse_status() -> Vec<serde_json::Value> {
     // Linux does not use the Windows onboard takeover watchdog or its notices.
     Vec::new()
@@ -3017,7 +3007,7 @@ async fn create_onboard_backup(path: String) -> Result<bool, CommandError> {
                 .map_err(|message| CommandError::new("onboard_backup_failed", message, None))
         })
         .await
-        .map_err(|e| CommandError::internal(format!("onboard backup task failed: {e}")))?;
+        .map_err(|e| CommandError::internal(format!("onboard backup task failed: {e}")))?
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -3454,6 +3444,7 @@ pub fn run() {
     let log_rx_for_setup = Mutex::new(Some((log_rx, log_send_pending_for_bridge)));
     // The guard thread outlives setup; the builder still needs the original for
     // `manage`, so hand the setup closure its own handle.
+    #[cfg(target_os = "windows")]
     let runtime_store_for_guard = runtime_store.clone();
 
     tauri::Builder::default()
