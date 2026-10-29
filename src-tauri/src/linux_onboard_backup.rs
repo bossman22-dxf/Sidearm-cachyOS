@@ -28,15 +28,25 @@ const COMMAND_STATUS_NO_RESPONSE: u8 = 0x04;
 const CLASS_CONTROL: u8 = 0x00;
 const CLASS_BUTTON: u8 = 0x02;
 const CLASS_DPI: u8 = 0x04;
+const CLASS_POWER: u8 = 0x07;
 const CMD_GET_POLL_RATE: u8 = 0x85;
 const CMD_GET_BUTTON: u8 = 0x8c;
 const CMD_GET_DPI: u8 = 0x85;
+const CMD_GET_BATTERY: u8 = 0x80;
 const BUSY_RETRIES: usize = 8;
 const SETTLE: Duration = Duration::from_millis(50);
 const BUSY_WAIT: Duration = Duration::from_millis(200);
 
 /// Serializes the report SET/GET exchange across all backup requests.
 static DEVICE_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinuxMouseSettings {
+    pub battery_percent: u8,
+    pub dpi: u16,
+    pub poll_rate_hz: u16,
+}
 
 pub struct LinuxOnboardDevice {
     device: HidDevice,
@@ -99,6 +109,15 @@ impl LinuxOnboardDevice {
             }
         }
         Err(format!("HID query {class:#04x}/{command:#04x} did not receive a matching reply"))
+    }
+
+    pub fn settings(&self) -> Result<LinuxMouseSettings, String> {
+        let battery_reply = self.command(CLASS_POWER, CMD_GET_BATTERY, &[0x00, 0x00])?;
+        Ok(LinuxMouseSettings {
+            battery_percent: ((u16::from(battery_reply[9]) * 100 + 127) / 255) as u8,
+            dpi: self.dpi()?,
+            poll_rate_hz: self.poll_rate_hz()?,
+        })
     }
 
     fn raw_button_record(&self, button_id: u8, layer: u8) -> Result<[u8; 10], String> {
