@@ -59,31 +59,31 @@ pub struct ConsumerSignals {
 impl NativeModel {
     /// Consumer usage a key button sends on this model, if it has the path.
     #[cfg(any(target_os = "windows", test))]
-pub fn consumer_usage_for(&self, control_id: &str) -> Option<u16> {
+    pub fn consumer_usage_for(&self, control_id: &str) -> Option<u16> {
         self.consumer.as_ref()?.usages.iter().find(|(id, _)| *id == control_id).map(|(_, usage)| *usage)
     }
 
     /// Vendor button id of a control whose onboard record emits a key.
     #[cfg(any(target_os = "windows", test))]
-pub fn button_id_for(&self, control_id: &str) -> Option<u8> {
+    pub fn button_id_for(&self, control_id: &str) -> Option<u8> {
         self.key_buttons.iter().find(|(id, _)| *id == control_id).map(|(_, button)| *button)
     }
 
     /// Vendor slot of a key button, when this model writes it through one.
     #[cfg(any(target_os = "windows", test))]
-pub fn slot_for(&self, button_id: u8) -> Option<u8> {
+    pub fn slot_for(&self, button_id: u8) -> Option<u8> {
         self.slots.iter().find(|(button, _)| *button == button_id).map(|(_, slot)| *slot)
     }
 
     /// Wire code of a poll rate the model supports.
     #[cfg(any(target_os = "windows", test))]
-pub fn poll_code_for_hz(&self, hz: u16) -> Option<u8> {
+    pub fn poll_code_for_hz(&self, hz: u16) -> Option<u8> {
         self.poll_rates.iter().find(|(rate, _)| *rate == hz).map(|(_, code)| *code)
     }
 
     /// Poll rate (Hz) of a wire code.
     #[cfg(any(target_os = "windows", test))]
-pub fn hz_for_poll_code(&self, code: u8) -> Option<u16> {
+    pub fn hz_for_poll_code(&self, code: u8) -> Option<u16> {
         self.poll_rates.iter().find(|(_, c)| *c == code).map(|(rate, _)| *rate)
     }
     /// What the Mouse workspace needs to know about the model: name, DPI
