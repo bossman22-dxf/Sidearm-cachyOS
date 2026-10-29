@@ -43,6 +43,14 @@ cargo run --manifest-path src-tauri/Cargo.toml --bin sidearm-recover -- --restor
 
 The restore utility requires the exact confirmation word `RESTORE`.
 
+To apply Sidearm’s standard mapping (12 thumb buttons to F13–F24; M4/M5 kept as native mouse buttons 4/5), use a complete backup file. The utility verifies every write and attempts to roll the original backup back if a write fails:
+
+```fish
+cargo run --manifest-path src-tauri/Cargo.toml --bin sidearm-recover -- --apply-sidearm-mapping "$HOME/naga-v2-hyperspeed.sidearm-backup.json"
+```
+
+The mapping utility requires the exact confirmation word `APPLY`. The Tauri Mouse workspace performs the same sequence: create a new complete backup, ask for confirmation, then apply the mapping.
+
 ## Current verification boundary
 
 Automated protocol/container tests and Linux CI must pass before considering the implementation build-ready. Hardware read, backup, and restore must still be tested on the actual Naga V2 HyperSpeed receiver. A successful build alone does not establish hardware compatibility or safe restoration.
