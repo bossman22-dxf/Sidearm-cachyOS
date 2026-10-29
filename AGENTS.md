@@ -118,3 +118,5 @@ Run before declaring a code change done:
 - `src-tauri/AGENTS.md` — Rust + Tauri backend (capture, execution, config, Synapse import, mouse onboard memory, platform)
 - `schemas/AGENTS.md` — the config JSON Schema contract (Rust ↔ schema ↔ TS)
 - `docs/LINUX-PORT-SAFETY-AND-ACCESSIBILITY.md` — required Linux mouse-backup/recovery safety gates and keyboard-accessibility acceptance criteria
+- `docs/LINUX-ONBOARD-RECOVERY.md` — backup, validation, confirmed mapping, and standalone recovery procedures
+- `docs/LINUX-HID-PERMISSIONS.md` — least-privilege HID access for the Naga V2 HyperSpeed
