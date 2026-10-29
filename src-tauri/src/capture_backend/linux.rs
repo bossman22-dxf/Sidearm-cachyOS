@@ -145,10 +145,9 @@ fn evdev_code_to_key_name(code: u16) -> Option<&'static str> {
     }
 }
 
-/// Find evdev devices that match "Razer" and "Naga" in their name.
-///
-/// First pass: look for devices containing both "razer" and "naga".
-/// Fallback: accept any device containing "razer" (broader match).
+/// Find the Naga keyboard collection, not the similarly named pointer or
+/// auxiliary HID collections. The factory key cluster identifies the correct
+/// interface until Sidearm changes the thumb records to F13-F24.
 fn find_razer_naga_devices() -> Vec<std::path::PathBuf> {
     let mut result = Vec::new();
 
