@@ -4,13 +4,13 @@
 
 The native Linux backup path currently targets only the verified Razer Naga V2 HyperSpeed receiver (USB VID:PID `1532:00b4`, vendor HID interface 0). It reads 21 known addressable button IDs across layers 0 and 1, preserving each ten-byte record exactly. Other Razer models and Bluetooth are not supported by this path.
 
-The backup also records live DPI and polling rate when those reads succeed. The current restore path restores button records only; it does not restore DPI, polling rate, battery state, or device mode.
+The backup also records live DPI, polling rate, and the device mode before any Sidearm operation. Restore writes the raw button records and returns the device to that saved mode; it does not restore DPI, polling rate, or battery state. Applying the Sidearm mapping switches the device to normal/onboard mode and leaves it there so the firmware emits F13–F24.
 
 ## Safety
 
 - Backup and validation are read-only with respect to onboard memory.
-- A backup is restorable only if all 42 button/layer addresses were read and the device identity and protocol match.
-- Restore writes each original raw record and immediately verifies an exact byte-for-byte read-back. It stops on the first failure; a failed restore may therefore be partial. Keep the original backup file unchanged.
+- A backup is restorable only if all 42 button/layer addresses and the original device mode were read, and the device identity and protocol match.
+- Restore first switches to normal/onboard mode, writes each original raw record, and immediately verifies an exact byte-for-byte read-back. It then restores the saved device mode. It stops on the first failure; a failed restore may therefore be partial. Keep the original backup file unchanged.
 - The standalone recovery utility asks the operator to type `RESTORE` before it writes anything.
 - Never run Sidearm as root. If HID access is denied, configure a narrow user-session udev permission for this exact VID:PID; do not use world-writable HID nodes.
 - The Mouse workspace exposes one fixed mapping action only: it first saves a complete backup, then requires explicit confirmation, then verifies every write and attempts rollback on failure. It does not expose arbitrary raw records or arbitrary button categories.
