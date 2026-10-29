@@ -39,7 +39,6 @@ const CMD_SET_DPI: u8 = 0x05;
 const CMD_GET_MODE: u8 = 0x84;
 const CMD_SET_MODE: u8 = 0x04;
 const MODE_NORMAL: u8 = 0x00;
-const MODE_DRIVER: u8 = 0x03;
 const MODE_CONFIRM_ATTEMPTS: u32 = 4;
 const CMD_GET_BATTERY: u8 = 0x80;
 const BUSY_RETRIES: usize = 8;
