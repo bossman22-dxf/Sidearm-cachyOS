@@ -212,8 +212,8 @@ function sidearmPublishWindow(win) {
         "org.sidearm.Focus",
         "WindowActivated",
         win && win.pid ? win.pid : 0,
-        win ? win.caption : "",
-        win ? win.resourceClass : ""
+        win && win.caption ? win.caption : "",
+        win && win.resourceClass ? win.resourceClass : ""
     );
 }
 function sidearmCaptionChanged() {
