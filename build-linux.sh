@@ -2,7 +2,7 @@
 # Sidearm Linux Build Script
 # Usage: ./build-linux.sh [--clean]
 #
-# Builds the release binary + bundles (AppImage, deb).
+# Builds the release binary + AppImage bundle.
 # Run this on a Linux machine with the repo cloned.
 set -euo pipefail
 
@@ -37,7 +37,7 @@ done
 log "Checking prerequisites..."
 
 missing=()
-for cmd in cargo node npm; do
+for cmd in cargo rustc node npm; do
     if ! command -v "$cmd" &>/dev/null; then
         missing+=("$cmd")
     fi
@@ -51,26 +51,55 @@ if [ ${#missing[@]} -gt 0 ]; then
     exit 1
 fi
 
-# System libraries for Tauri v2
-TAURI_LIBS=(
-    libwebkit2gtk-4.1-dev
-    libgtk-3-dev
-    libappindicator3-dev
-    librsvg2-dev
-    libssl-dev
-    patchelf
-)
+# Tauri v2 dependencies differ by distribution. Check installed packages
+# without installing anything or upgrading the system.
 missing_libs=()
-for lib in "${TAURI_LIBS[@]}"; do
-    if ! dpkg -s "$lib" &>/dev/null 2>&1; then
-        missing_libs+=("$lib")
-    fi
-done
+if command -v pacman &>/dev/null; then
+    log "Checking Arch/CachyOS build dependencies..."
+    required_packages=(
+        webkit2gtk-4.1 gtk3
+        gcc make pkgconf
+        curl wget file openssl
+        appmenu-gtk-module libappindicator-gtk3 librsvg xdotool
+        patchelf systemd-libs
+    )
+    for package in "${required_packages[@]}"; do
+        if ! pacman -T "$package" &>/dev/null; then
+            missing_libs+=("$package")
+        fi
+    done
 
-if [ ${#missing_libs[@]} -gt 0 ]; then
-    err "Missing system libraries: ${missing_libs[*]}"
-    echo ""
-    echo "  sudo apt update && sudo apt install -y ${missing_libs[*]}"
+    if [ ${#missing_libs[@]} -gt 0 ]; then
+        err "Missing system packages: ${missing_libs[*]}"
+        echo ""
+        echo "  Install only the missing packages with:"
+        echo "  sudo pacman -S --needed ${missing_libs[*]}"
+        exit 1
+    fi
+elif command -v dpkg-query &>/dev/null; then
+    log "Checking Debian/Ubuntu build dependencies..."
+    required_packages=(
+        build-essential curl wget file pkg-config
+        libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev
+        libssl-dev libudev-dev libayatana-appindicator3-dev
+        librsvg2-dev patchelf
+    )
+    for package in "${required_packages[@]}"; do
+        status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+        if [ "$status" != "install ok installed" ]; then
+            missing_libs+=("$package")
+        fi
+    done
+
+    if [ ${#missing_libs[@]} -gt 0 ]; then
+        err "Missing system packages: ${missing_libs[*]}"
+        echo ""
+        echo "  Install with:"
+        echo "  sudo apt install --no-install-recommends ${missing_libs[*]}"
+        exit 1
+    fi
+else
+    err "Unsupported package manager. Install the Tauri v2 Linux prerequisites for your distribution."
     exit 1
 fi
 
@@ -85,27 +114,26 @@ fi
 # ── Install npm deps if needed ─────────────────────────────
 if [ ! -d "$PROJECT_DIR/node_modules" ]; then
     log "Installing npm dependencies..."
-    (cd "$PROJECT_DIR" && npm install)
+    (cd "$PROJECT_DIR" && npm ci)
 fi
 
 # ── Build ──────────────────────────────────────────────────
-log "Building Sidearm release..."
+log "Building Sidearm release AppImage..."
 cd "$PROJECT_DIR"
-npx tauri build
+npx tauri build --bundles appimage
 
 echo ""
 ok "Build complete! Output:"
 echo ""
 
-# Show what was built
 if [ -f "$TAURI_DIR/target/release/sidearm" ]; then
     size=$(du -h "$TAURI_DIR/target/release/sidearm" | cut -f1)
     ok "  Binary:   $TAURI_DIR/target/release/sidearm ($size)"
 fi
 
-for bundle in "$TAURI_DIR/target/release/bundle"/{deb,appimage,rpm}/*; do
+for bundle in "$TAURI_DIR/target/release/bundle/appimage"/*.AppImage; do
     if [ -f "$bundle" ]; then
         size=$(du -h "$bundle" | cut -f1)
-        ok "  Bundle:   $bundle ($size)"
+        ok "  AppImage: $bundle ($size)"
     fi
 done
