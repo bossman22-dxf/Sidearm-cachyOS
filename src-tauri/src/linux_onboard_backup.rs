@@ -120,14 +120,15 @@ impl LinuxOnboardDevice {
     }
 
     pub fn set_dpi(&self, dpi: u16) -> Result<LinuxMouseSettings, String> {
-        self.set_dpi_in(dpi, VARSTORE)
+        self.write_dpi(dpi, VARSTORE)?;
+        self.settings()
     }
 
-    fn set_dpi_live(&self, dpi: u16) -> Result<LinuxMouseSettings, String> {
-        self.set_dpi_in(dpi, NOSTORE)
+    fn set_dpi_live(&self, dpi: u16) -> Result<(), String> {
+        self.write_dpi(dpi, NOSTORE)
     }
 
-    fn set_dpi_in(&self, dpi: u16, storage: u8) -> Result<LinuxMouseSettings, String> {
+    fn write_dpi(&self, dpi: u16, storage: u8) -> Result<(), String> {
         if !(100..=30_000).contains(&dpi) {
             return Err(format!("DPI {dpi} is outside 100..=30000"));
         }
@@ -137,10 +138,15 @@ impl LinuxOnboardDevice {
         if read != dpi {
             return Err(format!("mouse kept DPI {read} after a write of {dpi}"));
         }
-        self.settings()
+        Ok(())
     }
 
     pub fn set_poll_rate_hz(&self, hz: u16) -> Result<LinuxMouseSettings, String> {
+        self.write_poll_rate_hz(hz)?;
+        self.settings()
+    }
+
+    fn write_poll_rate_hz(&self, hz: u16) -> Result<(), String> {
         let code = match hz {
             1000 => 0x01,
             500 => 0x02,
@@ -152,7 +158,7 @@ impl LinuxOnboardDevice {
         if read != hz {
             return Err(format!("mouse kept {read} Hz after a write of {hz} Hz"));
         }
-        self.settings()
+        Ok(())
     }
 
     pub fn settings(&self) -> Result<LinuxMouseSettings, String> {
@@ -374,13 +380,17 @@ pub fn apply_profile_mouse_settings(profile: &crate::config::Profile) {
                     return Ok(());
                 }
                 if let Some(value) = dpi {
-                    device.set_dpi_live(value)?;
+                    if device.dpi()? != value {
+                        device.set_dpi_live(value)?;
+                    }
                 }
                 if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
                     return Ok(());
                 }
                 if let Some(value) = poll_rate_hz {
-                    device.set_poll_rate_hz(value)?;
+                    if device.poll_rate_hz()? != value {
+                        device.write_poll_rate_hz(value)?;
+                    }
                 }
                 Ok(())
             });
