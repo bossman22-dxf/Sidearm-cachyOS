@@ -64,7 +64,7 @@ export function MouseWorkspace({
   const [reportCopied, setReportCopied] = useState(false);
   /** The signal kind being switched to, until the switch is done; then "done". */
   const [signalsSwitch, setSignalsSwitch] = useState<boolean | "done" | null>(null);
-  const [backupAvailable, setBackupAvailable] = useState(false);
+  const [backupAvailable, setBackupAvailable] = useState<boolean | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupSaved, setBackupSaved] = useState(false);
   const [mappingApplied, setMappingApplied] = useState(false);
@@ -82,7 +82,7 @@ export function MouseWorkspace({
   }
 
   useEffect(() => {
-    onboardBackupSupported().then(setBackupAvailable);
+    onboardBackupSupported().then(setBackupAvailable, () => setBackupAvailable(false));
     getNativeModel().then(setModel, (unknownError: unknown) =>
       setError(normalizeCommandError(unknownError).message),
     );
@@ -350,7 +350,7 @@ export function MouseWorkspace({
         </section>
       ) : null}
 
-      {backupAvailable ? (
+      {backupAvailable === true ? (
         <section className="settings-section">
           <SettingRow title={t("mouse.backupHeader")} hint={t("mouse.backupHelp")}>
             <div className="mouse-signals">
@@ -378,7 +378,7 @@ export function MouseWorkspace({
       ) : null}
 
       <section className="settings-section">
-        {!backupAvailable ? (
+        {backupAvailable === false ? (
         <SettingRow title={t("mouse.offlineHeader")} hint={t("mouse.offlineHelp")}>
           <SelectField
             ariaLabel={t("mouse.offlineHeader")}
