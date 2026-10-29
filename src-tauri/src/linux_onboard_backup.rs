@@ -173,19 +173,18 @@ impl LinuxOnboardDevice {
 
     fn set_mode(&self, mode: u8) -> Result<(), String> {
         self.command(CLASS_CONTROL, CMD_SET_MODE, &[mode, 0x00])?;
+        let mut last = "no reply".to_string();
         for attempt in 0..MODE_CONFIRM_ATTEMPTS {
             if attempt > 0 {
                 thread::sleep(MODE_CONFIRM_WAIT);
             }
             match self.mode() {
                 Ok(actual) if actual == mode => return Ok(()),
-                Ok(actual) if actual == MODE_DRIVER && mode == MODE_NORMAL => {}
-                Ok(actual) => return Err(format!("mouse stayed in mode {actual:#04x} after requesting {mode:#04x}")),
-                Err(error) if attempt + 1 == MODE_CONFIRM_ATTEMPTS => return Err(error),
-                Err(_) => {}
+                Ok(actual) => last = format!("mouse stayed in mode {actual:#04x} after requesting {mode:#04x}"),
+                Err(error) => last = error,
             }
         }
-        Err("mouse did not confirm the requested device mode".into())
+        Err(last)
     }
 
     fn ensure_normal_mode(&self) -> Result<u8, String> {
