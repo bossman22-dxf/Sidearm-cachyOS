@@ -43,6 +43,7 @@ const BUSY_WAIT: Duration = Duration::from_millis(200);
 
 /// Serializes the report SET/GET exchange across all backup requests.
 static DEVICE_LOCK: Mutex<()> = Mutex::new(());
+static PROFILE_SWITCHES: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -346,6 +347,39 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
         device.write_raw_record(record)?;
     }
     Ok(())
+}
+
+/// Apply profile-specific DPI and polling rate without blocking the capture
+/// worker. A newer profile switch supersedes a queued older one.
+pub fn apply_profile_mouse_settings(profile: &crate::config::Profile) {
+    let (dpi, poll_rate_hz) = (profile.mouse_dpi, profile.mouse_poll_rate_hz);
+    if dpi.is_none() && poll_rate_hz.is_none() {
+        return;
+    }
+    let name = profile.name.clone();
+    let generation = PROFILE_SWITCHES.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = thread::Builder::new()
+        .name("linux-profile-mouse".into())
+        .spawn(move || {
+            let result = LinuxOnboardDevice::open().and_then(|device| {
+                if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
+                    return Ok(());
+                }
+                if let Some(value) = dpi {
+                    device.set_dpi(value)?;
+                }
+                if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
+                    return Ok(());
+                }
+                if let Some(value) = poll_rate_hz {
+                    device.set_poll_rate_hz(value)?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                log::warn!("[mouse] Could not apply profile settings for {name}: {error}");
+            }
+        });
 }
 
 /// Create a new backup file from the connected verified Naga. Existing files
