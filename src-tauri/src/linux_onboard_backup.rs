@@ -30,8 +30,10 @@ const CLASS_BUTTON: u8 = 0x02;
 const CLASS_DPI: u8 = 0x04;
 const CLASS_POWER: u8 = 0x07;
 const CMD_GET_POLL_RATE: u8 = 0x85;
+const CMD_SET_POLL_RATE: u8 = 0x05;
 const CMD_GET_BUTTON: u8 = 0x8c;
 const CMD_GET_DPI: u8 = 0x85;
+const CMD_SET_DPI: u8 = 0x05;
 const CMD_GET_BATTERY: u8 = 0x80;
 const BUSY_RETRIES: usize = 8;
 const SETTLE: Duration = Duration::from_millis(50);
@@ -109,6 +111,34 @@ impl LinuxOnboardDevice {
             }
         }
         Err(format!("HID query {class:#04x}/{command:#04x} did not receive a matching reply"))
+    }
+
+    pub fn set_dpi(&self, dpi: u16) -> Result<LinuxMouseSettings, String> {
+        if !(100..=30_000).contains(&dpi) {
+            return Err(format!("DPI {dpi} is outside 100..=30000"));
+        }
+        let [hi, lo] = dpi.to_be_bytes();
+        self.command(CLASS_DPI, CMD_SET_DPI, &[0x01, hi, lo, hi, lo, 0x00, 0x00])?;
+        let read = self.dpi()?;
+        if read != dpi {
+            return Err(format!("mouse kept DPI {read} after a write of {dpi}"));
+        }
+        self.settings()
+    }
+
+    pub fn set_poll_rate_hz(&self, hz: u16) -> Result<LinuxMouseSettings, String> {
+        let code = match hz {
+            1000 => 0x01,
+            500 => 0x02,
+            125 => 0x08,
+            _ => return Err(format!("unsupported polling rate {hz} Hz")),
+        };
+        self.command(CLASS_CONTROL, CMD_SET_POLL_RATE, &[code])?;
+        let read = self.poll_rate_hz()?;
+        if read != hz {
+            return Err(format!("mouse kept {read} Hz after a write of {hz} Hz"));
+        }
+        self.settings()
     }
 
     pub fn settings(&self) -> Result<LinuxMouseSettings, String> {
