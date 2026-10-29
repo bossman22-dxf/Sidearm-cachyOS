@@ -258,6 +258,7 @@ impl LinuxOnboardDevice {
             ids.insert(id);
         }
 
+        let mode_before = self.mode().ok();
         let mut records = Vec::new();
         let mut failures = Vec::new();
         for button_id in ids {
@@ -273,7 +274,11 @@ impl LinuxOnboardDevice {
             dpi: self.dpi().ok(),
             poll_rate_hz: self.poll_rate_hz().ok(),
         };
-        let device_mode = self.mode().ok();
+        let mode_after = self.mode().ok();
+        let device_mode = match (mode_before, mode_after) {
+            (Some(before), Some(after)) if before == after => Some(before),
+            _ => None,
+        };
         let payload = SnapshotPayload {
             format: FORMAT_ID.into(),
             format_version: FORMAT_VERSION,
