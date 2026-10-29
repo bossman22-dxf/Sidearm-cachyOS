@@ -48,6 +48,14 @@ jobs:
           workspaces: src-tauri
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # Build the native Linux bundle so the PR produces an installable test artifact.
+      - run: npx tauri build --bundles appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidearm-linux-appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 14
 
   rust:
     name: Rust (clippy · tests)
