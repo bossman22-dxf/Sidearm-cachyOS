@@ -3,11 +3,13 @@ import { useTranslation } from "react-i18next";
 import { OFFLINE_PROFILE_ACTIVE, type AppConfig, type Profile } from "../lib/config";
 import { upsertProfile } from "../lib/config-editing";
 import {
+  createOnboardBackup,
   getDeviceReport,
   getMouseSettings,
   getNativeModel,
   listenMouseBattery,
   normalizeCommandError,
+  onboardBackupSupported,
   openDeviceReportIssue,
   setKeySignals,
   setMouseDpi,
@@ -60,6 +62,9 @@ export function MouseWorkspace({
   const [reportCopied, setReportCopied] = useState(false);
   /** The signal kind being switched to, until the switch is done; then "done". */
   const [signalsSwitch, setSignalsSwitch] = useState<boolean | "done" | null>(null);
+  const [backupAvailable, setBackupAvailable] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupSaved, setBackupSaved] = useState(false);
 
   async function run(request: () => Promise<MouseSettingsState>) {
     setBusy(true);
@@ -74,6 +79,7 @@ export function MouseWorkspace({
   }
 
   useEffect(() => {
+    onboardBackupSupported().then(setBackupAvailable);
     getNativeModel().then(setModel, (unknownError: unknown) =>
       setError(normalizeCommandError(unknownError).message),
     );
@@ -120,6 +126,20 @@ export function MouseWorkspace({
       setError(normalizeCommandError(unknownError).message);
     } finally {
       setReporting(false);
+    }
+  }
+
+  async function saveOnboardBackup() {
+    setBackupBusy(true);
+    setBackupSaved(false);
+    try {
+      const saved = await createOnboardBackup();
+      setBackupSaved(saved);
+      setError(null);
+    } catch (unknownError) {
+      setError(normalizeCommandError(unknownError).message);
+    } finally {
+      setBackupBusy(false);
     }
   }
 
@@ -297,6 +317,22 @@ export function MouseWorkspace({
               ) : null}
             </div>
           </SettingRow>
+        </section>
+      ) : null}
+
+      {backupAvailable ? (
+        <section className="settings-section">
+          <SettingRow title={t("mouse.backupHeader")} hint={t("mouse.backupHelp")}>
+            <button
+              type="button"
+              className="action-button action-button--secondary action-button--small"
+              onClick={() => void saveOnboardBackup()}
+              disabled={backupBusy}
+            >
+              {backupBusy ? t("mouse.backupBusy") : t("mouse.backupButton")}
+            </button>
+          </SettingRow>
+          {backupSaved ? <p className="panel__muted help-sm" role="status">{t("mouse.backupSaved")}</p> : null}
         </section>
       ) : null}
 
