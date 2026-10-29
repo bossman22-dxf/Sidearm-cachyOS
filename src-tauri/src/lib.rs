@@ -3891,7 +3891,6 @@ pub fn run() {
             apply_onboard_mapping,
             verify_onboard_mapping,
             restore_onboard_control,
-            get_mouse_status,
             get_native_model,
             get_device_report,
             open_device_report_issue,
