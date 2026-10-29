@@ -1,8 +1,8 @@
 //! Portable, lossless container for data read from a mouse's onboard memory.
 //!
-//! This module deliberately does not talk to hardware. A future platform
-//! transport must collect raw records and pass them here; no restore operation
-//! is exposed until the device protocol has a separately verified raw writer.
+//! This module deliberately does not talk to hardware. Platform transports
+//! collect raw records and pass them here; device-specific restore remains in
+//! the platform transport and validates this container before writing.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
