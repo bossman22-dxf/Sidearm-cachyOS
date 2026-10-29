@@ -198,9 +198,13 @@ fn load_kwin_focus_script(script_path: &Path) -> Result<(), String> {
         "org.kde.kwin.Script",
     )
     .map_err(|e| format!("KWin script object unavailable: {e}"))?;
-    script_proxy
-        .call::<_, _, ()>("run", &())
-        .map_err(|e| format!("KWin refused to start Sidearm's focus script: {e}"))
+    match script_proxy.call::<_, _, ()>("run", &()) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = proxy.call::<_, _, ()>("unloadScript", &KWIN_PLUGIN_NAME);
+            Err(format!("KWin refused to start Sidearm's focus script: {error}"))
+        }
+    }
 }
 
 const KWIN_FOCUS_SCRIPT: &str = r#"
