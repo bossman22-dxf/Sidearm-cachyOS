@@ -375,29 +375,42 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn sidearm_mapping_records() -> Vec<RawButtonRecord> {
+fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
     let mut records = Vec::with_capacity(28);
     for index in 0..12u8 {
         let button_id = 0x40 + index;
         let usage = 0x68 + index;
         for layer in 0..=1 {
-            records.push(RawButtonRecord {
-                button_id,
-                layer,
-                bytes: [0x01, button_id, layer, 0x02, 0x02, 0x00, usage, 0, 0, 0],
-            });
+            let mut record = payload
+                .records
+                .iter()
+                .find(|record| record.button_id == button_id && record.layer == layer)
+                .cloned()
+                .ok_or_else(|| format!("backup is missing thumb button {button_id:#04x} layer {layer}"))?;
+            // Change only the action header/value. Keep reserved bytes exactly
+            // as they were in the backup for forward compatibility.
+            record.bytes[3] = 0x02;
+            record.bytes[4] = 0x02;
+            record.bytes[5] = 0x00;
+            record.bytes[6] = usage;
+            records.push(record);
         }
     }
     for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
         for layer in 0..=1 {
-            records.push(RawButtonRecord {
-                button_id,
-                layer,
-                bytes: [0x01, button_id, layer, 0x01, 0x01, mouse_button, 0, 0, 0, 0],
-            });
+            let mut record = payload
+                .records
+                .iter()
+                .find(|record| record.button_id == button_id && record.layer == layer)
+                .cloned()
+                .ok_or_else(|| format!("backup is missing native button {button_id:#04x} layer {layer}"))?;
+            record.bytes[3] = 0x01;
+            record.bytes[4] = 0x01;
+            record.bytes[5] = mouse_button;
+            records.push(record);
         }
     }
-    records
+    Ok(records)
 }
 
 /// Apply the fixed Sidearm convention only when the backup still matches the
@@ -436,7 +449,7 @@ pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
         }
     };
 
-    for mapping in sidearm_mapping_records() {
+    for mapping in sidearm_mapping_records(payload)? {
         if let Err(error) = device.write_raw_record(&mapping) {
             let mut rollback_errors = Vec::new();
             for original in &payload.records {
@@ -556,12 +569,22 @@ mod tests {
 
     #[test]
     fn sidearm_mapping_targets_f13_to_f24_and_preserves_real_mouse_buttons() {
-        let records = sidearm_mapping_records();
+        let mut payload = complete_payload();
+        for (index, record) in payload.records.iter_mut().enumerate() {
+            record.bytes[7] = index as u8;
+            record.bytes[8] = 0xaa;
+            record.bytes[9] = 0xbb;
+        }
+        let records = sidearm_mapping_records(&payload).unwrap();
         assert_eq!(records.len(), 28);
-        assert_eq!(records[0].bytes, [1, 0x40, 0, 2, 2, 0, 0x68, 0, 0, 0]);
-        assert_eq!(records[23].bytes, [1, 0x4b, 1, 2, 2, 0, 0x73, 0, 0, 0]);
-        assert_eq!(records[24].bytes, [1, 0x34, 0, 1, 1, 4, 0, 0, 0, 0]);
-        assert_eq!(records[27].bytes, [1, 0x35, 1, 1, 1, 5, 0, 0, 0, 0]);
+        assert_eq!(&records[0].bytes[3..7], &[2, 2, 0, 0x68]);
+        assert_eq!(&records[23].bytes[3..7], &[2, 2, 0, 0x73]);
+        assert_eq!(&records[24].bytes[3..6], &[1, 1, 4]);
+        assert_eq!(&records[27].bytes[3..6], &[1, 1, 5]);
+        for record in &records {
+            let original = payload.records.iter().find(|item| item.button_id == record.button_id && item.layer == record.layer).unwrap();
+            assert_eq!(&record.bytes[7..10], &original.bytes[7..10]);
+        }
     }
 
     #[test]
