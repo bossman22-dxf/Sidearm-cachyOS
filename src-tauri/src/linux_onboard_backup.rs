@@ -97,9 +97,12 @@ impl LinuxOnboardDevice {
 
             let mut input = [0u8; PAYLOAD_LEN + 1];
             input[0] = REPORT_ID;
-            self.device
+            let bytes_read = self.device
                 .get_feature_report(&mut input)
                 .map_err(|e| format!("Could not read HID reply {class:#04x}/{command:#04x}: {e}"))?;
+            if bytes_read != PAYLOAD_LEN + 1 {
+                return Err(format!("HID reply {class:#04x}/{command:#04x} was truncated: expected {} bytes, got {bytes_read}", PAYLOAD_LEN + 1));
+            }
             let mut reply = [0u8; PAYLOAD_LEN];
             reply.copy_from_slice(&input[1..]);
             if reply[6..8] != request[6..8] {
