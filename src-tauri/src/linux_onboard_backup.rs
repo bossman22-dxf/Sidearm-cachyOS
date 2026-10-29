@@ -6,13 +6,13 @@
 
 use crate::onboard_backup::{
     DeviceIdentity, OnboardBackup, RawButtonRecord, ReadFailure, ReadableSettings,
-    SnapshotPayload, OnboardBackup, FORMAT_ID, FORMAT_VERSION,
+    SnapshotPayload, FORMAT_ID, FORMAT_VERSION,
 };
 use hidapi::{HidApi, HidDevice};
 use std::{
     collections::BTreeSet,
     path::Path,
-    sync::{Mutex, MutexGuard},
+    sync::{atomic::{AtomicU64, Ordering}, Mutex, MutexGuard},
     thread,
     time::Duration,
 };
@@ -175,7 +175,7 @@ impl LinuxOnboardDevice {
         let mut last = "no reply".to_string();
         for attempt in 0..MODE_CONFIRM_ATTEMPTS {
             if attempt > 0 {
-                thread::sleep(MODE_CONFIRM_WAIT);
+                thread::sleep(SETTLE);
             }
             match self.mode() {
                 Ok(actual) if actual == mode => return Ok(()),
