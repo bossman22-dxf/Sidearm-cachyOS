@@ -80,7 +80,7 @@ Default section order:
 
 ## Purpose
 
-Windows-first desktop app that remaps a programmable mouse (Razer Naga) and keyboard into per-app keyboard shortcuts, text snippets, macros, launches, and profile switching, with automatic profile switching on the foreground app. Dark theme only.
+Cross-platform desktop app that remaps a programmable mouse (Razer Naga) and keyboard into per-app keyboard shortcuts, text snippets, macros, launches, and profile switching, with automatic profile switching on the foreground app. Windows remains supported; native Linux on CachyOS/KDE Wayland is a primary port target. Dark theme only.
 
 ## Stack
 
@@ -103,7 +103,8 @@ Run before declaring a code change done:
 
 - Frontend: `npm run check` (= `tsc --noEmit` + `knip` dead-code + `cargo clippy`) and `npm run test` (vitest).
 - Rust: `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` and `cargo test --manifest-path src-tauri/Cargo.toml`.
-- Integration smoke: `pwsh -File build_portable.ps1` (release build + WebView2 packaging; build via pwsh, not cmd; also runs cargo audit + npm audit and fails on vulnerabilities — accepted advisories live in `.cargo/audit.toml`).
+- Linux CI: Ubuntu build dependencies, Rust clippy/tests, and a native Tauri AppImage artifact.
+- Integration smoke: `pwsh -File build_portable.ps1` (Windows release build + WebView2 packaging; build via pwsh, not cmd; also runs cargo audit + npm audit and fails on vulnerabilities — accepted advisories live in `.cargo/audit.toml`).
 - The desktop UI cannot be rendered headlessly here — visual and screen-reader changes need a manual pass in the running app.
 
 ## User Preferences
@@ -117,4 +118,7 @@ Run before declaring a code change done:
 - `src/AGENTS.md` — React + TypeScript frontend (UI, pure logic, hooks, i18n)
 - `src-tauri/AGENTS.md` — Rust + Tauri backend (capture, execution, config, Synapse import, mouse onboard memory, platform)
 - `schemas/AGENTS.md` — the config JSON Schema contract (Rust ↔ schema ↔ TS)
-- `plans/onboard-memory/2026-10-16-findings.md` — investigation ledger for the mouse onboard-memory and raw-HID work: measured hardware/registry facts, REA state, open questions, and traps already paid for
+- `docs/LINUX-PORT-SAFETY-AND-ACCESSIBILITY.md` — required Linux mouse-backup/recovery safety gates and keyboard-accessibility acceptance criteria
+- `docs/LINUX-ONBOARD-RECOVERY.md` — backup, validation, confirmed mapping, and standalone recovery procedures
+- `docs/LINUX-HID-PERMISSIONS.md` — least-privilege HID access for the Naga V2 HyperSpeed
+- `docs/LINUX-KDE-WAYLAND.md` — native KWin foreground-window integration and manual verification

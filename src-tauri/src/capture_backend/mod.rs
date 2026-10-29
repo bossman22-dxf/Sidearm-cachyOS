@@ -64,7 +64,12 @@ pub fn capture_helper_main() {
     log::error!("[capture-helper] Only supported on Windows and Linux.");
 }
 
+#[cfg(target_os = "windows")]
 pub const CAPTURE_BACKEND_NAME: &str = "windows-hotkey";
+#[cfg(target_os = "linux")]
+pub const CAPTURE_BACKEND_NAME: &str = "linux-evdev";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub const CAPTURE_BACKEND_NAME: &str = "unsupported";
 
 /// When true, the runtime surfaces raw key events to the UI (the
 /// `encoded_key_received` event still fires) but does NOT resolve, execute, or
@@ -846,6 +851,14 @@ pub(crate) fn emit_profile_resolved_and_notify(
                 .and_then(|id| config.profiles.iter().find(|p| p.id == id))
             {
                 crate::onboard_guard::apply_profile_mouse_settings(profile);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(profile) = capture_result
+                .resolved_profile_id
+                .as_deref()
+                .and_then(|id| config.profiles.iter().find(|p| p.id == id))
+            {
+                crate::linux_onboard_backup::apply_profile_mouse_settings(profile);
             }
         }
     }

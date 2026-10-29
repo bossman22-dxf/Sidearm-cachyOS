@@ -5,7 +5,6 @@ mod capture_backend;
 mod chord;
 mod command_error;
 mod config;
-#[cfg(target_os = "windows")]
 mod device_catalog;
 #[cfg(target_os = "windows")]
 mod exe_icon;
@@ -15,6 +14,9 @@ mod input_synthesis;
 mod log_cleanup;
 #[cfg(target_os = "windows")]
 mod mouse_memory;
+pub mod onboard_backup;
+#[cfg(target_os = "linux")]
+pub mod linux_onboard_backup;
 #[cfg(target_os = "windows")]
 mod mouse_offline;
 #[cfg(target_os = "windows")]
@@ -2869,6 +2871,161 @@ async fn get_device_report() -> Result<String, CommandError> {
     .map_err(|e| CommandError::internal(format!("device report task failed: {e}")))?
 }
 
+#[tauri::command]
+fn onboard_backup_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Creates a lossless read-only backup of the connected Naga's onboard records.
+// Windows-only onboard management commands retain their IPC names so the
+// shared frontend can run on Linux without accidentally invoking Windows code.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn apply_onboard_mapping(bindings: Vec<serde_json::Value>) -> Result<(), CommandError> {
+    let _ = bindings;
+    Err(CommandError::internal("Linux uses the fixed F13-F24 onboard mapping; arbitrary onboard writes are not supported."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn verify_onboard_mapping(bindings: Vec<serde_json::Value>) -> Result<serde_json::Value, CommandError> {
+    let _ = bindings;
+    Err(CommandError::internal("Per-binding onboard verification is not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn restore_onboard_control(_app: AppHandle) -> Result<(), CommandError> {
+    Err(CommandError::internal("Use the standalone recovery utility to restore a saved onboard backup on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_device_report() -> Result<String, CommandError> {
+    Err(CommandError::internal("The Windows device-report workflow is not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn open_device_report_issue() -> Result<(), CommandError> {
+    Err(CommandError::internal("The Windows device-report workflow is not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_key_signals(app: AppHandle, consumer: bool) -> Result<(), CommandError> {
+    let _ = (app, consumer);
+    Err(CommandError::internal("Consumer-signal mode is not supported by the Linux capture backend."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn open_startup_apps_settings() -> Result<(), CommandError> {
+    Err(CommandError::internal("Windows startup-app settings are not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_exe_icon(
+    exe_name: String,
+    process_path: Option<String>,
+) -> Result<Option<String>, CommandError> {
+    let _ = (exe_name, process_path);
+    Ok(None)
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn get_mouse_status() -> Vec<serde_json::Value> {
+    // Linux does not use the Windows onboard takeover watchdog or its notices.
+    Vec::new()
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_native_model() -> Result<device_catalog::NativeModelInfo, CommandError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let connected = linux_onboard_backup::LinuxOnboardDevice::open().is_ok();
+        let mut info = device_catalog::NAGA_V2_HYPERSPEED.info(connected, false);
+        info.consumer_signals = None;
+        info
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("native model task failed: {e}")))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_mouse_settings() -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        linux_onboard_backup::LinuxOnboardDevice::open()
+            .and_then(|device| device.settings())
+            .map_err(|message| CommandError::new("onboard_device_unavailable", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("mouse settings task failed: {e}")))?
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_mouse_dpi(dpi: u16) -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        linux_onboard_backup::LinuxOnboardDevice::open()
+            .and_then(|device| device.set_dpi(dpi))
+            .map_err(|message| CommandError::new("onboard_device_write_failed", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("mouse DPI task failed: {e}")))?
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_mouse_poll_rate(hz: u16) -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        linux_onboard_backup::LinuxOnboardDevice::open()
+            .and_then(|device| device.set_poll_rate_hz(hz))
+            .map_err(|message| CommandError::new("onboard_device_write_failed", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("mouse poll-rate task failed: {e}")))?
+}
+
+#[tauri::command]
+async fn apply_naga_standard_mapping(path: String) -> Result<(), CommandError> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            linux_onboard_backup::apply_sidearm_mapping(std::path::Path::new(&path))
+                .map_err(|message| CommandError::new("onboard_mapping_failed", message, None))
+        })
+        .await
+        .map_err(|e| CommandError::internal(format!("onboard mapping task failed: {e}")))?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(CommandError::internal("Native onboard mapping is not available on this platform."))
+    }
+}
+
+#[tauri::command]
+async fn create_onboard_backup(path: String) -> Result<bool, CommandError> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            linux_onboard_backup::backup_connected_mouse(std::path::Path::new(&path))
+                .map_err(|message| CommandError::new("onboard_backup_failed", message, None))
+        })
+        .await
+        .map_err(|e| CommandError::internal(format!("onboard backup task failed: {e}")))?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(CommandError::internal("Onboard memory backup is not available on this platform."))
+    }
+}
+
 /// Opens a new GitHub issue for a device report in the browser. The report
 /// itself goes through the clipboard: it is too long for a URL.
 #[cfg(target_os = "windows")]
@@ -3357,6 +3514,11 @@ pub fn run() {
             // One-time migration from old "com.nagaworkflowstudio.desktop" config dir.
             migrate_old_config(app.handle());
 
+            #[cfg(target_os = "linux")]
+            if let Ok(config_dir) = app.path().app_config_dir() {
+                platform::window::start_kde_focus_monitor(&config_dir);
+            }
+
             log::info!(
                 "[log-retention] sweep: deleted {deleted}, kept {kept} \
                  (max {LOG_RETENTION_DAYS}d / {LOG_RETENTION_MAX_FILES} files)"
@@ -3741,6 +3903,9 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(MacroRecorder::new())))
         .invoke_handler(tauri::generate_handler![
             export_verification_session,
+            onboard_backup_supported,
+            create_onboard_backup,
+            apply_naga_standard_mapping,
             load_config,
             save_config,
             get_app_paths,
@@ -3802,6 +3967,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                #[cfg(target_os = "linux")]
+                platform::window::stop_kde_focus_monitor();
                 log::info!("[system] Clean shutdown.");
                 // Stop the capture helper first: an orphaned helper keeps its
                 // mouse hook alive and swallows back/forward after exit.

@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Platform-specific implementations behind a shared interface: display/DPI, input synthesis details, foreground-window info, and shell/registry lookups. Windows is the primary target; Linux is best-effort.
+Platform-specific implementations behind a shared interface: display/DPI, input synthesis details, foreground-window info, and shell/registry lookups. Windows remains supported; native Linux on CachyOS/KDE Plasma Wayland is a primary target.
 
 ## Ownership
 
 - `mod.rs` — the platform-agnostic surface.
 - `windows/` — `display.rs`, `input.rs`, `window.rs`, `shell.rs` (App Paths registry, `REG_EXPAND_SZ` expansion, path-traversal-guarded exe lookup), plus process/elevation helpers.
-- `linux/` — `display.rs`, `window.rs`, `shell.rs`.
+- `linux/` — `display.rs`, `window.rs`, `shell.rs`; KDE Wayland focus integration is owned by `linux/AGENTS.md`.
 
 ## Local Contracts
 
@@ -27,4 +27,4 @@ Platform-specific implementations behind a shared interface: display/DPI, input 
 
 ## Child DOX Index
 
-- None. Leaf directory.
+- `linux/AGENTS.md` — Linux platform implementation and KDE/GNOME Wayland integration.
