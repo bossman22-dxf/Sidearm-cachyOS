@@ -243,33 +243,36 @@ impl LinuxOnboardDevice {
     }
 }
 
+fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
+if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
+    return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
+}
+let identity = &payload.device;
+if identity.vendor_id != VID
+    || identity.product_id != PID
+    || identity.model != "Razer Naga V2 HyperSpeed"
+    || identity.interface != INTERFACE as u8
+    || identity.protocol != "razer-command-class-v1"
+{
+    return Err("refusing to restore: backup belongs to a different device or protocol".into());
+}
+let expected: BTreeSet<(u8, u8)> = [
+    0x40u8,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x0b,0x0c,
+    0x01,0x02,0x03,0x09,0x0a,0x34,0x35,
+].into_iter().flat_map(|button| [(button, 0), (button, 1)]).collect();
+let actual: BTreeSet<(u8, u8)> = payload.records.iter().map(|r| (r.button_id, r.layer)).collect();
+if actual != expected {
+    return Err("refusing to restore: backup does not contain the complete expected button/layer address set".into());
+}
+}
+
 /// Restore only a complete, validated backup for this exact model. Every
 /// record is written as its original raw ten-byte value and read back exactly.
 /// This is intentionally separate from the UI and can be called by the recovery
 /// CLI when the main application cannot start.
 pub fn restore_backup(path: &Path) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
-    let payload = &backup.payload;
-    if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
-        return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
-    }
-    let identity = &payload.device;
-    if identity.vendor_id != VID
-        || identity.product_id != PID
-        || identity.model != "Razer Naga V2 HyperSpeed"
-        || identity.interface != INTERFACE as u8
-        || identity.protocol != "razer-command-class-v1"
-    {
-        return Err("refusing to restore: backup belongs to a different device or protocol".into());
-    }
-    let expected: BTreeSet<(u8, u8)> = [
-        0x40u8,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x0b,0x0c,
-        0x01,0x02,0x03,0x09,0x0a,0x34,0x35,
-    ].into_iter().flat_map(|button| [(button, 0), (button, 1)]).collect();
-    let actual: BTreeSet<(u8, u8)> = payload.records.iter().map(|r| (r.button_id, r.layer)).collect();
-    if actual != expected {
-        return Err("refusing to restore: backup does not contain the complete expected button/layer address set".into());
-    }
+    validate_restore_payload(payload)?;
 
     let device = LinuxOnboardDevice::open()?;
     for record in &payload.records {
@@ -302,6 +305,66 @@ fn chrono_free_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn complete_payload() -> SnapshotPayload {
+        let ids = [0x40u8,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x0b,0x0c,
+                   0x01,0x02,0x03,0x09,0x0a,0x34,0x35];
+        let records = ids.into_iter().flat_map(|button_id| {
+            (0..=1).map(move |layer| RawButtonRecord {
+                button_id,
+                layer,
+                bytes: [0x01, button_id, layer, 0x02, 0x02, 0x00, 0x68, 0, 0, 0],
+            })
+        }).collect();
+        SnapshotPayload {
+            format: FORMAT_ID.into(),
+            format_version: FORMAT_VERSION,
+            sidearm_version: "test".into(),
+            captured_at: "unix:1".into(),
+            device: DeviceIdentity {
+                vendor_id: VID,
+                product_id: PID,
+                model: "Razer Naga V2 HyperSpeed".into(),
+                interface: INTERFACE as u8,
+                protocol: "razer-command-class-v1".into(),
+            },
+            settings: ReadableSettings { dpi: None, poll_rate_hz: None },
+            records,
+            read_failures: vec![],
+            scan_complete: true,
+        }
+    }
+
+    #[test]
+    fn restore_validation_accepts_only_complete_expected_snapshot() {
+        let payload = complete_payload();
+        assert!(validate_restore_payload(&payload).is_ok());
+    }
+
+    #[test]
+    fn restore_validation_rejects_incomplete_snapshot() {
+        let mut payload = complete_payload();
+        payload.scan_complete = false;
+        payload.records.pop();
+        assert!(validate_restore_payload(&payload).unwrap_err().contains("incomplete"));
+    }
+
+    #[test]
+    fn restore_validation_rejects_wrong_device_identity() {
+        let mut payload = complete_payload();
+        payload.device.product_id = 0x00b5;
+        assert!(validate_restore_payload(&payload).unwrap_err().contains("different device"));
+    }
+
+    #[test]
+    fn restore_validation_rejects_missing_or_duplicate_addresses() {
+        let mut payload = complete_payload();
+        payload.records.pop();
+        assert!(validate_restore_payload(&payload).unwrap_err().contains("complete expected"));
+        let mut payload = complete_payload();
+        payload.records[0] = payload.records[1].clone();
+        assert!(validate_restore_payload(&payload).unwrap_err().contains("complete expected"));
+    }
 
     #[test]
     fn request_checksum_matches_device_protocol() {
