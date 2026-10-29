@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [master]
+    branches: [master, linux-port-foundation]
   pull_request:
 
 # Cancel superseded runs on the same ref to save runner minutes.
