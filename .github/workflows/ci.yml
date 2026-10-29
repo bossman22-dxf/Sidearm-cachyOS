@@ -50,10 +50,13 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       # Build the native Linux bundle so the PR produces an installable test artifact.
       - run: npx tauri build --bundles appimage
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked --bin sidearm-recover
       - uses: actions/upload-artifact@v4
         with:
           name: sidearm-linux-appimage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/sidearm-recover
           if-no-files-found: error
           retention-days: 14
 
