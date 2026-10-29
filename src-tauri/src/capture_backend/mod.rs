@@ -852,6 +852,14 @@ pub(crate) fn emit_profile_resolved_and_notify(
             {
                 crate::onboard_guard::apply_profile_mouse_settings(profile);
             }
+            #[cfg(target_os = "linux")]
+            if let Some(profile) = capture_result
+                .resolved_profile_id
+                .as_deref()
+                .and_then(|id| config.profiles.iter().find(|p| p.id == id))
+            {
+                crate::linux_onboard_backup::apply_profile_mouse_settings(profile);
+            }
         }
     }
 }
