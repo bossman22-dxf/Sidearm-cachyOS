@@ -2871,6 +2871,11 @@ async fn get_device_report() -> Result<String, CommandError> {
     .map_err(|e| CommandError::internal(format!("device report task failed: {e}")))?
 }
 
+#[tauri::command]
+fn onboard_backup_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// Creates a lossless read-only backup of the connected Naga's onboard records.
 #[cfg(target_os = "linux")]
 #[tauri::command]
@@ -3755,6 +3760,7 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(MacroRecorder::new())))
         .invoke_handler(tauri::generate_handler![
             export_verification_session,
+            onboard_backup_supported,
             #[cfg(target_os = "linux")]
             create_onboard_backup,
             load_config,
