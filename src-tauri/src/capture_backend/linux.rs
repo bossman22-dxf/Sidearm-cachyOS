@@ -152,21 +152,25 @@ fn evdev_code_to_key_name(code: u16) -> Option<&'static str> {
 fn find_razer_naga_devices() -> Vec<std::path::PathBuf> {
     let mut result = Vec::new();
 
-    // evdev::enumerate() returns (PathBuf, Device) tuples
     for (path, device) in evdev::enumerate() {
         let name = device.name().unwrap_or_default().to_ascii_lowercase();
-        if name.contains("razer") && name.contains("naga") {
-            result.push(path);
+        if !name.contains("razer") || !name.contains("naga") {
+            continue;
         }
-    }
 
-    // Fallback: accept any Razer device that might emit F-keys
-    if result.is_empty() {
-        for (path, device) in evdev::enumerate() {
-            let name = device.name().unwrap_or_default().to_ascii_lowercase();
-            if name.contains("razer") {
-                result.push(path);
-            }
+        // The Naga exposes several evdev collections with the same product
+        // name. Only the keyboard collection carries the twelve thumb keys
+        // (the factory profile reports KEY_1..KEY_EQUAL, codes 2..=13).
+        // Never grab the first matching collection: that can be the pointer
+        // interface and would leave the actual thumb keyboard uncaptured.
+        let has_thumb_key_cluster = device.supported_keys().is_some_and(|keys| {
+            (2u16..=13)
+                .filter(|code| evdev::Key::new(*code).is_some_and(|key| keys.contains(&key)))
+                .count()
+                >= 10
+        });
+        if has_thumb_key_cluster {
+            result.push(path);
         }
     }
 
