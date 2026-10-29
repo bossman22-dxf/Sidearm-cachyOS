@@ -60,7 +60,7 @@ if command -v pacman &>/dev/null; then
         webkit2gtk-4.1 gtk3
         gcc make pkgconf
         curl wget file openssl
-        appmenu-gtk-module libappindicator librsvg xdotool
+        appmenu-gtk-module libappindicator-gtk3 librsvg xdotool
         patchelf systemd-libs
     )
     for package in "${required_packages[@]}"; do
