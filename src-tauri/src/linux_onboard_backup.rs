@@ -612,7 +612,7 @@ mod tests {
     fn restore_validation_rejects_missing_or_duplicate_addresses() {
         let mut payload = complete_payload();
         payload.records.pop();
-        assert!(validate_restore_payload(&payload).unwrap_err().contains("complete expected"));
+        assert!(validate_restore_payload(&payload).unwrap_err().contains("incomplete"));
         let mut payload = complete_payload();
         payload.records[0] = payload.records[1].clone();
         assert!(validate_restore_payload(&payload).unwrap_err().contains("complete expected"));
