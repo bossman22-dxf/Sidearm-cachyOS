@@ -244,26 +244,36 @@ impl LinuxOnboardDevice {
 }
 
 fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
-if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
-    return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
+    if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
+        return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
+    }
+    let identity = &payload.device;
+    if identity.vendor_id != VID
+        || identity.product_id != PID
+        || identity.model != "Razer Naga V2 HyperSpeed"
+        || identity.interface != INTERFACE as u8
+        || identity.protocol != "razer-command-class-v1"
+    {
+        return Err("refusing to restore: backup belongs to a different device or protocol".into());
 }
-let identity = &payload.device;
-if identity.vendor_id != VID
-    || identity.product_id != PID
-    || identity.model != "Razer Naga V2 HyperSpeed"
-    || identity.interface != INTERFACE as u8
-    || identity.protocol != "razer-command-class-v1"
-{
-    return Err("refusing to restore: backup belongs to a different device or protocol".into());
-}
-let expected: BTreeSet<(u8, u8)> = [
+    let expected: BTreeSet<(u8, u8)> = [
     0x40u8,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x0b,0x0c,
     0x01,0x02,0x03,0x09,0x0a,0x34,0x35,
 ].into_iter().flat_map(|button| [(button, 0), (button, 1)]).collect();
-let actual: BTreeSet<(u8, u8)> = payload.records.iter().map(|r| (r.button_id, r.layer)).collect();
-if actual != expected {
-    return Err("refusing to restore: backup does not contain the complete expected button/layer address set".into());
-}
+    for record in &payload.records {
+        if record.layer > 1
+            || record.bytes[0] != 0x01
+            || record.bytes[1] != record.button_id
+            || record.bytes[2] != record.layer
+            || record.bytes[4] > 5
+        {
+            return Err("refusing to restore: backup contains an invalid raw record".into());
+        }
+    }
+    let actual: BTreeSet<(u8, u8)> = payload.records.iter().map(|r| (r.button_id, r.layer)).collect();
+    if actual != expected {
+        return Err("refusing to restore: backup does not contain the complete expected button/layer address set".into());
+    }
 }
 
 /// Restore only a complete, validated backup for this exact model. Every
