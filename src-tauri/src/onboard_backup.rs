@@ -60,6 +60,8 @@ pub struct SnapshotPayload {
     pub captured_at: String,
     pub device: DeviceIdentity,
     pub settings: ReadableSettings,
+    /// Device mode before any Sidearm operation (0 = onboard/normal, 3 = driver).
+    pub device_mode: Option<u8>,
     pub records: Vec<RawButtonRecord>,
     /// Every requested address that could not be read. Missing records are
     /// never silently interpreted as empty/default records.
@@ -186,6 +188,7 @@ mod tests {
                 protocol: "razer-command-class-v1".into(),
             },
             settings: ReadableSettings { dpi: Some(1600), poll_rate_hz: Some(1000) },
+            device_mode: Some(0),
             records: vec![RawButtonRecord { button_id: 0x40, layer: 0, bytes: [1,2,3,4,5,6,7,8,9,10] }],
             read_failures: vec![ReadFailure { button_id: 0x41, layer: 0, reason: "no response".into() }],
             scan_complete: false,
