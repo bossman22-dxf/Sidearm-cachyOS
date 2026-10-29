@@ -307,6 +307,14 @@ fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate that a backup is structurally sound, complete, and restorable
+/// to this exact device model. This does not open or modify the mouse.
+pub fn validate_backup_for_restore(path: &Path) -> Result<usize, String> {
+    let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
+    validate_restore_payload(&backup.payload)?;
+    Ok(backup.payload.records.len())
+}
+
 /// Restore only a complete, validated backup for this exact model. Every
 /// record is written as its original raw ten-byte value and read back exactly.
 /// This is intentionally separate from the UI and can be called by the recovery
