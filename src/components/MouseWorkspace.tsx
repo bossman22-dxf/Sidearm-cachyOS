@@ -336,8 +336,8 @@ export function MouseWorkspace({
         </section>
       ) : null}
 
-      {!backupAvailable ? (
       <section className="settings-section">
+        {!backupAvailable ? (
         <SettingRow title={t("mouse.offlineHeader")} hint={t("mouse.offlineHelp")}>
           <SelectField
             ariaLabel={t("mouse.offlineHeader")}
@@ -362,6 +362,7 @@ export function MouseWorkspace({
             }
           />
         </SettingRow>
+        ) : null}
         <SettingRow title={t("mouse.batteryHeader")} hint={t("mouse.batteryHelp")}>
           {device ? (
             <strong>{t("mouse.batteryValue", { percent: device.batteryPercent })}</strong>
@@ -394,7 +395,6 @@ export function MouseWorkspace({
           </Notice>
         ) : null}
       </section>
-      ) : null}
     </div>
   );
 }
