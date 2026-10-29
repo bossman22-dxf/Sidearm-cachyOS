@@ -6,7 +6,7 @@
 
 use crate::onboard_backup::{
     DeviceIdentity, OnboardBackup, RawButtonRecord, ReadFailure, ReadableSettings,
-    SnapshotPayload, FORMAT_ID, FORMAT_VERSION,
+    SnapshotPayload, OnboardBackup, FORMAT_ID, FORMAT_VERSION,
 };
 use hidapi::{HidApi, HidDevice};
 use std::{
@@ -175,6 +175,23 @@ impl LinuxOnboardDevice {
         }
     }
 
+    fn write_raw_record(&self, record: &RawButtonRecord) -> Result<(), String> {
+        if record.layer > 1
+            || record.bytes[0] != 0x01
+            || record.bytes[1] != record.button_id
+            || record.bytes[2] != record.layer
+            || usize::from(record.bytes[4]) > 5
+        {
+            return Err(format!("backup contains an invalid raw record for button {:#04x} layer {}", record.button_id, record.layer));
+        }
+        self.command(CLASS_BUTTON, 0x0c, &record.bytes)?;
+        let readback = self.raw_button_record(record.button_id, record.layer)?;
+        if readback != record.bytes {
+            return Err(format!("button {:#04x} layer {} did not read back byte-for-byte after restore", record.button_id, record.layer));
+        }
+        Ok(())
+    }
+
     pub fn create_backup(&self) -> Result<OnboardBackup, String> {
         let mut ids = BTreeSet::new();
         // These are the complete, hardware-scanned set of addressable records
@@ -218,6 +235,41 @@ impl LinuxOnboardDevice {
         };
         OnboardBackup::new(payload).map_err(|e| e.to_string())
     }
+}
+
+/// Restore only a complete, validated backup for this exact model. Every
+/// record is written as its original raw ten-byte value and read back exactly.
+/// This is intentionally separate from the UI and can be called by the recovery
+/// CLI when the main application cannot start.
+pub fn restore_backup(path: &Path) -> Result<(), String> {
+    let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
+    let payload = &backup.payload;
+    if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
+        return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
+    }
+    let identity = &payload.device;
+    if identity.vendor_id != VID
+        || identity.product_id != PID
+        || identity.model != "Razer Naga V2 HyperSpeed"
+        || identity.interface != INTERFACE as u8
+        || identity.protocol != "razer-command-class-v1"
+    {
+        return Err("refusing to restore: backup belongs to a different device or protocol".into());
+    }
+    let expected: BTreeSet<(u8, u8)> = [
+        0x40u8,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x0b,0x0c,
+        0x01,0x02,0x03,0x09,0x0a,0x34,0x35,
+    ].into_iter().flat_map(|button| [(button, 0), (button, 1)]).collect();
+    let actual: BTreeSet<(u8, u8)> = payload.records.iter().map(|r| (r.button_id, r.layer)).collect();
+    if actual != expected {
+        return Err("refusing to restore: backup does not contain the complete expected button/layer address set".into());
+    }
+
+    let device = LinuxOnboardDevice::open()?;
+    for record in &payload.records {
+        device.write_raw_record(record)?;
+    }
+    Ok(())
 }
 
 /// Create a new backup file from the connected verified Naga. Existing files
