@@ -336,6 +336,7 @@ export function MouseWorkspace({
         </section>
       ) : null}
 
+      {!backupAvailable ? (
       <section className="settings-section">
         <SettingRow title={t("mouse.offlineHeader")} hint={t("mouse.offlineHelp")}>
           <SelectField
@@ -393,6 +394,7 @@ export function MouseWorkspace({
           </Notice>
         ) : null}
       </section>
+      ) : null}
     </div>
   );
 }
