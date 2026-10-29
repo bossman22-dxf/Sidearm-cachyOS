@@ -1,8 +1,8 @@
 //! Read-only Linux HID access for the verified Naga V2 HyperSpeed.
 //!
 //! Sending a vendor feature report is required to issue the protocol's GET
-//! commands; this module never sends a command that changes onboard memory,
-//! device mode, DPI, or polling rate.
+//! commands; only the explicitly invoked DPI/poll controls and recovery method
+//! send writes. Backup creation itself never modifies the mouse.
 
 use crate::onboard_backup::{
     DeviceIdentity, OnboardBackup, RawButtonRecord, ReadFailure, ReadableSettings,
@@ -33,6 +33,8 @@ const CMD_GET_POLL_RATE: u8 = 0x85;
 const CMD_SET_POLL_RATE: u8 = 0x05;
 const CMD_GET_BUTTON: u8 = 0x8c;
 const CMD_GET_DPI: u8 = 0x85;
+const NOSTORE: u8 = 0x00;
+const VARSTORE: u8 = 0x01;
 const CMD_SET_DPI: u8 = 0x05;
 const CMD_GET_BATTERY: u8 = 0x80;
 const BUSY_RETRIES: usize = 8;
@@ -118,8 +120,8 @@ impl LinuxOnboardDevice {
             return Err(format!("DPI {dpi} is outside 100..=30000"));
         }
         let [hi, lo] = dpi.to_be_bytes();
-        self.command(CLASS_DPI, CMD_SET_DPI, &[0x01, hi, lo, hi, lo, 0x00, 0x00])?;
-        let read = self.dpi()?;
+        self.command(CLASS_DPI, CMD_SET_DPI, &[VARSTORE, hi, lo, hi, lo, 0x00, 0x00])?;
+        let read = self.dpi_in(VARSTORE)?;
         if read != dpi {
             return Err(format!("mouse kept DPI {read} after a write of {dpi}"));
         }
@@ -159,8 +161,12 @@ impl LinuxOnboardDevice {
     }
 
     fn dpi(&self) -> Result<u16, String> {
+        self.dpi_in(NOSTORE)
+    }
+
+    fn dpi_in(&self, storage: u8) -> Result<u16, String> {
         let mut args = [0u8; 7];
-        args[0] = 0;
+        args[0] = storage;
         let reply = self.command(CLASS_DPI, CMD_GET_DPI, &args)?;
         Ok(u16::from_be_bytes([reply[9], reply[10]]))
     }
