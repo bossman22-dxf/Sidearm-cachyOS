@@ -2928,7 +2928,7 @@ async fn set_mouse_poll_rate(hz: u16) -> Result<linux_onboard_backup::LinuxMouse
 async fn create_onboard_backup(path: String) -> Result<(), CommandError> {
     #[cfg(target_os = "linux")]
     {
-        return tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             linux_onboard_backup::backup_connected_mouse(std::path::Path::new(&path))
                 .map_err(|message| CommandError::new("onboard_backup_failed", message, None))
         })
