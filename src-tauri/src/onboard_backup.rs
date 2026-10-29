@@ -118,7 +118,9 @@ impl OnboardBackup {
                 return Err(BackupError::InvalidRecords);
             }
         }
-        if self.payload.scan_complete && !self.payload.read_failures.is_empty() {
+        if self.payload.scan_complete
+            && (!self.payload.read_failures.is_empty() || self.payload.device_mode.is_none())
+        {
             return Err(BackupError::InvalidRecords);
         }
         let bytes = serde_json::to_vec(&self.payload)?;
