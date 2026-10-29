@@ -114,14 +114,19 @@ export async function onboardBackupSupported(): Promise<boolean> {
 }
 
 /** Save a lossless read-only onboard-memory backup to a user-selected file. */
-export async function createOnboardBackup(): Promise<boolean> {
+export async function createOnboardBackup(): Promise<{ path: string; complete: boolean } | null> {
   const path = await save({
     defaultPath: "naga-v2-hyperspeed.sidearm-backup.json",
     filters: [{ name: "Sidearm mouse backup", extensions: ["json"] }],
   });
-  if (!path) return false;
-  await invoke<void>("create_onboard_backup", { path });
-  return true;
+  if (!path) return null;
+  const complete = await invoke<boolean>("create_onboard_backup", { path });
+  return { path, complete };
+}
+
+/** Apply the Naga's fixed Sidearm mapping after a complete backup and user confirmation. */
+export async function applyNagaStandardMapping(path: string): Promise<void> {
+  return invoke<void>("apply_naga_standard_mapping", { path });
 }
 
 /** Read-only text dump of the connected mouse for a "help verify" issue (~20 s). */
