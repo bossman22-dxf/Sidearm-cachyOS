@@ -6,10 +6,210 @@
 
 #![allow(unused_imports)]
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock, mpsc},
+    thread,
+    time::Duration,
+};
 
 use crate::runtime::timestamp_millis;
 use crate::window_capture::RawWindowCapture;
+
+const KWIN_BUS_NAME: &str = "org.sidearm.Sidearm";
+const KWIN_OBJECT_PATH: &str = "/org/sidearm/Focus";
+const KWIN_INTERFACE: &str = "org.sidearm.Focus";
+const KWIN_PLUGIN_NAME: &str = "sidearm-focus-monitor";
+
+static KDE_WINDOW_CACHE: OnceLock<Arc<Mutex<Option<RawWindowCapture>>>> = OnceLock::new();
+static KDE_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone)]
+struct KWinFocusService {
+    cache: Arc<Mutex<Option<RawWindowCapture>>>,
+}
+
+#[zbus::interface(name = "org.sidearm.Focus")]
+impl KWinFocusService {
+    fn window_activated(&self, pid: i32, title: String, resource_class: String) {
+        if pid <= 0 {
+            *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return;
+        }
+
+        let pid = pid as u32;
+        let process_path = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let exe = if !resource_class.is_empty() {
+            resource_class.to_ascii_lowercase()
+        } else {
+            Path::new(&process_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+        };
+        let capture = RawWindowCapture {
+            hwnd: String::new(),
+            pid,
+            exe,
+            process_path,
+            title,
+            captured_at: timestamp_millis(),
+            is_elevated: is_process_elevated(pid),
+        };
+        *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(capture);
+    }
+}
+
+/// Start a small KWin script that pushes the active Wayland window to a private
+/// session-bus service owned by Sidearm. This avoids polling the journal or
+/// relying on XWayland's incomplete view of native Wayland windows.
+pub(crate) fn start_kde_focus_monitor(config_dir: &Path) {
+    if !is_kde_wayland() || KDE_MONITOR_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let script_dir = config_dir.join("kwin");
+    let script_path = script_dir.join("sidearm-focus.js");
+    if let Err(error) = std::fs::create_dir_all(&script_dir)
+        .and_then(|()| std::fs::write(&script_path, KWIN_FOCUS_SCRIPT))
+    {
+        KDE_MONITOR_STARTED.store(false, Ordering::SeqCst);
+        log::warn!("[window] Could not install the KWin focus script: {error}");
+        return;
+    }
+
+    let cache = KDE_WINDOW_CACHE
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone();
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let service_cache = cache.clone();
+    let service_started = thread::Builder::new()
+        .name("kwin-focus-dbus".into())
+        .spawn(move || {
+            let result = zbus::blocking::connection::Builder::session()
+                .and_then(|builder| builder.name(KWIN_BUS_NAME))
+                .and_then(|builder| {
+                    builder.serve_at(KWIN_OBJECT_PATH, KWinFocusService { cache: service_cache })
+                })
+                .and_then(|builder| builder.build());
+            match result {
+                Ok(connection) => {
+                    let _ = ready_tx.send(Ok(()));
+                    // Keep the service connection alive for the lifetime of Sidearm.
+                    let _connection = connection;
+                    loop {
+                        thread::park_timeout(Duration::from_secs(3600));
+                    }
+                }
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error.to_string()));
+                    log::warn!("[window] Could not start the KWin focus D-Bus service: {error}");
+                }
+            }
+        });
+
+    if let Err(error) = service_started {
+        KDE_MONITOR_STARTED.store(false, Ordering::SeqCst);
+        log::warn!("[window] Could not start the KWin focus service thread: {error}");
+        return;
+    }
+
+    match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            KDE_MONITOR_STARTED.store(false, Ordering::SeqCst);
+            log::warn!("[window] KWin focus service failed: {error}");
+            return;
+        }
+        Err(error) => {
+            KDE_MONITOR_STARTED.store(false, Ordering::SeqCst);
+            log::warn!("[window] KWin focus service did not become ready: {error}");
+            return;
+        }
+    }
+
+    if let Err(error) = load_kwin_focus_script(&script_path) {
+        KDE_MONITOR_STARTED.store(false, Ordering::SeqCst);
+        log::warn!("[window] Could not load the KWin focus script: {error}");
+    } else {
+        log::info!("[window] KWin Wayland focus monitor started.");
+    }
+}
+
+fn is_kde_wayland() -> bool {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return false;
+    }
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_ascii_lowercase();
+    desktop.split(':').any(|part| part == "kde" || part == "plasma")
+        || std::env::var_os("KDE_SESSION_VERSION").is_some()
+        || std::env::var_os("KDE_FULL_SESSION").is_some()
+}
+
+fn load_kwin_focus_script(script_path: &Path) -> Result<(), String> {
+    use zbus::blocking::{Connection, Proxy};
+
+    let connection = Connection::session().map_err(|e| format!("session D-Bus unavailable: {e}"))?;
+    let proxy = Proxy::new(
+        &connection,
+        "org.kde.KWin",
+        "/Scripting",
+        "org.kde.kwin.Scripting",
+    )
+    .map_err(|e| format!("KWin scripting D-Bus interface unavailable: {e}"))?;
+
+    let _ = proxy.call::<_, _, ()>("unloadScript", &KWIN_PLUGIN_NAME);
+    let args = (script_path.to_string_lossy().into_owned(), KWIN_PLUGIN_NAME.to_string());
+    let script_id: i32 = proxy
+        .call("loadScript", &args)
+        .map_err(|e| format!("KWin refused to load Sidearm's focus script: {e}"))?;
+    let object_path = format!("/Scripting/Script{script_id}");
+    let script_proxy = Proxy::new(
+        &connection,
+        "org.kde.KWin",
+        object_path.as_str(),
+        "org.kde.kwin.Script",
+    )
+    .map_err(|e| format!("KWin script object unavailable: {e}"))?;
+    script_proxy
+        .call::<_, _, ()>("run", &())
+        .map_err(|e| format!("KWin refused to start Sidearm's focus script: {e}"))
+}
+
+const KWIN_FOCUS_SCRIPT: &str = r#"
+var sidearmActiveWindow = null;
+function sidearmPublishWindow(win) {
+    callDBus(
+        "org.sidearm.Sidearm",
+        "/org/sidearm/Focus",
+        "org.sidearm.Focus",
+        "WindowActivated",
+        win && win.pid ? win.pid : 0,
+        win ? win.caption : "",
+        win ? win.resourceClass : ""
+    );
+}
+function sidearmCaptionChanged() {
+    if (workspace.activeWindow === sidearmActiveWindow) {
+        sidearmPublishWindow(sidearmActiveWindow);
+    }
+}
+function sidearmWindowActivated(win) {
+    if (sidearmActiveWindow && sidearmActiveWindow.captionChanged) {
+        sidearmActiveWindow.captionChanged.disconnect(sidearmCaptionChanged);
+    }
+    sidearmActiveWindow = win;
+    if (sidearmActiveWindow && sidearmActiveWindow.captionChanged) {
+        sidearmActiveWindow.captionChanged.connect(sidearmCaptionChanged);
+    }
+    sidearmPublishWindow(sidearmActiveWindow);
+}
+workspace.windowActivated.connect(sidearmWindowActivated);
+sidearmWindowActivated(workspace.activeWindow);
+"#;
 
 /// Call the Sidearm GNOME Shell extension D-Bus `Get` method and parse the JSON
 /// payload it returns (gdbus wraps it as `('{...}',)`). Shared by
@@ -86,7 +286,19 @@ fn try_gnome_dbus() -> Option<RawWindowCapture> {
 /// On Wayland sessions, first tries the Sidearm GNOME Shell D-Bus extension.
 /// Falls back to `active_win_pos_rs::get_active_window` (XCB/X11).
 pub(crate) fn capture_foreground_window() -> Result<RawWindowCapture, String> {
-    // Try GNOME Wayland D-Bus extension first
+    // KDE Wayland does not expose active-window details through a readable
+    // D-Bus property. The KWin script pushes changes into Sidearm's session
+    // service, so return that cached native Wayland window directly.
+    if is_kde_wayland() {
+        if let Some(cache) = KDE_WINDOW_CACHE.get() {
+            if let Some(capture) = cache.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                return Ok(capture);
+            }
+        }
+        return Err("KWin Wayland focus monitor is not ready; check Sidearm's KWin script and session D-Bus connection.".into());
+    }
+
+    // GNOME Wayland uses its own focused-window extension.
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
         if let Some(capture) = try_gnome_dbus() {
             return Ok(capture);
