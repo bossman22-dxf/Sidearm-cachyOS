@@ -2877,6 +2877,59 @@ fn onboard_backup_supported() -> bool {
 }
 
 /// Creates a lossless read-only backup of the connected Naga's onboard records.
+// Windows-only onboard management commands retain their IPC names so the
+// shared frontend can run on Linux without accidentally invoking Windows code.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn apply_onboard_mapping(_bindings: Vec<serde_json::Value>) -> Result<(), CommandError> {
+    Err(CommandError::internal("Linux uses the fixed F13-F24 onboard mapping; arbitrary onboard writes are not supported."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn verify_onboard_mapping(_bindings: Vec<serde_json::Value>) -> Result<serde_json::Value, CommandError> {
+    Err(CommandError::internal("Per-binding onboard verification is not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn restore_onboard_control(_app: AppHandle) -> Result<(), CommandError> {
+    Err(CommandError::internal("Use the standalone recovery utility to restore a saved onboard backup on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_device_report() -> Result<String, CommandError> {
+    Err(CommandError::internal("The Windows device-report workflow is not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn open_device_report_issue() -> Result<(), CommandError> {
+    Err(CommandError::internal("The Windows device-report workflow is not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_key_signals(_app: AppHandle, _consumer: bool) -> Result<(), CommandError> {
+    Err(CommandError::internal("Consumer-signal mode is not supported by the Linux capture backend."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn open_startup_apps_settings() -> Result<(), CommandError> {
+    Err(CommandError::internal("Windows startup-app settings are not available on Linux."))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_exe_icon(
+    _exe_name: String,
+    _process_path: Option<String>,
+) -> Result<Option<String>, CommandError> {
+    Ok(None)
+}
+
 #[cfg(target_os = "linux")]
 #[tauri::command]
 fn get_mouse_status() -> Vec<serde_json::Value> {
