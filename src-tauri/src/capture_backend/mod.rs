@@ -64,7 +64,12 @@ pub fn capture_helper_main() {
     log::error!("[capture-helper] Only supported on Windows and Linux.");
 }
 
+#[cfg(target_os = "windows")]
 pub const CAPTURE_BACKEND_NAME: &str = "windows-hotkey";
+#[cfg(target_os = "linux")]
+pub const CAPTURE_BACKEND_NAME: &str = "linux-evdev";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub const CAPTURE_BACKEND_NAME: &str = "unsupported";
 
 /// When true, the runtime surfaces raw key events to the UI (the
 /// `encoded_key_received` event still fires) but does NOT resolve, execute, or
