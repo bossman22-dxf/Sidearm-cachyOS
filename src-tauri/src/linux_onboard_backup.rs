@@ -288,7 +288,8 @@ impl LinuxOnboardDevice {
                 protocol: "razer-command-class-v1".into(),
             },
             settings,
-            scan_complete: failures.is_empty() && records.len() == 42,
+            device_mode,
+            scan_complete: failures.is_empty() && records.len() == 42 && device_mode.is_some(),
             records,
             read_failures: failures,
         };
