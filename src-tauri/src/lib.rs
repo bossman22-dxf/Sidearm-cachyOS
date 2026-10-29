@@ -3967,6 +3967,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                #[cfg(target_os = "linux")]
+                platform::window::stop_kde_focus_monitor();
                 log::info!("[system] Clean shutdown.");
                 // Stop the capture helper first: an orphaned helper keeps its
                 // mouse hook alive and swallows back/forward after exit.
