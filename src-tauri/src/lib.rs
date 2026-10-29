@@ -2881,13 +2881,15 @@ fn onboard_backup_supported() -> bool {
 // shared frontend can run on Linux without accidentally invoking Windows code.
 #[cfg(target_os = "linux")]
 #[tauri::command]
-async fn apply_onboard_mapping(_bindings: Vec<serde_json::Value>) -> Result<(), CommandError> {
+async fn apply_onboard_mapping(bindings: Vec<serde_json::Value>) -> Result<(), CommandError> {
+    let _ = bindings;
     Err(CommandError::internal("Linux uses the fixed F13-F24 onboard mapping; arbitrary onboard writes are not supported."))
 }
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
-async fn verify_onboard_mapping(_bindings: Vec<serde_json::Value>) -> Result<serde_json::Value, CommandError> {
+async fn verify_onboard_mapping(bindings: Vec<serde_json::Value>) -> Result<serde_json::Value, CommandError> {
+    let _ = bindings;
     Err(CommandError::internal("Per-binding onboard verification is not available on Linux."))
 }
 
@@ -2911,7 +2913,8 @@ fn open_device_report_issue() -> Result<(), CommandError> {
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
-async fn set_key_signals(_app: AppHandle, _consumer: bool) -> Result<(), CommandError> {
+async fn set_key_signals(app: AppHandle, consumer: bool) -> Result<(), CommandError> {
+    let _ = (app, consumer);
     Err(CommandError::internal("Consumer-signal mode is not supported by the Linux capture backend."))
 }
 
@@ -2924,9 +2927,10 @@ fn open_startup_apps_settings() -> Result<(), CommandError> {
 #[cfg(target_os = "linux")]
 #[tauri::command]
 async fn get_exe_icon(
-    _exe_name: String,
-    _process_path: Option<String>,
+    exe_name: String,
+    process_path: Option<String>,
 ) -> Result<Option<String>, CommandError> {
+    let _ = (exe_name, process_path);
     Ok(None)
 }
 
