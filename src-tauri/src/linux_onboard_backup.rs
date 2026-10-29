@@ -357,16 +357,105 @@ pub fn validate_backup_for_restore(path: &Path) -> Result<usize, String> {
 
 /// Restore only a complete, validated backup for this exact model. Every
 /// record is written as its original raw ten-byte value and read back exactly.
-/// This is intentionally separate from the UI and can be called by the recovery
-/// CLI when the main application cannot start.
+/// The original device mode is restored after the records.
 pub fn restore_backup(path: &Path) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
+    let saved_mode = payload
+        .device_mode
+        .ok_or_else(|| "backup is missing its original device mode".to_string())?;
 
     let device = LinuxOnboardDevice::open()?;
+    device.ensure_normal_mode()?;
     for record in &payload.records {
         device.write_raw_record(record)?;
+    }
+    device.set_mode(saved_mode)?;
+    Ok(())
+}
+
+fn sidearm_mapping_records() -> Vec<RawButtonRecord> {
+    let mut records = Vec::with_capacity(28);
+    for index in 0..12u8 {
+        let button_id = 0x40 + index;
+        let usage = 0x68 + index;
+        for layer in 0..=1 {
+            records.push(RawButtonRecord {
+                button_id,
+                layer,
+                bytes: [0x01, button_id, layer, 0x02, 0x02, 0x00, usage, 0, 0, 0],
+            });
+        }
+    }
+    for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
+        for layer in 0..=1 {
+            records.push(RawButtonRecord {
+                button_id,
+                layer,
+                bytes: [0x01, button_id, layer, 0x01, 0x01, mouse_button, 0, 0, 0, 0],
+            });
+        }
+    }
+    records
+}
+
+/// Apply the fixed Sidearm convention only when the backup still matches the
+/// connected mouse. A failed write triggers a full raw-record and mode rollback.
+pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
+    let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
+    let payload = &backup.payload;
+    validate_restore_payload(payload)?;
+    let saved_mode = payload
+        .device_mode
+        .ok_or_else(|| "backup is missing its original device mode".to_string())?;
+
+    let device = LinuxOnboardDevice::open()?;
+    let current_mode = device.mode()?;
+    if current_mode != saved_mode {
+        return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
+    }
+    for original in &payload.records {
+        let current = device.raw_button_record(original.button_id, original.layer)?;
+        if current != original.bytes {
+            return Err(format!(
+                "button {:#04x} layer {} changed since this backup was created; no mapping was written",
+                original.button_id, original.layer
+            ));
+        }
+    }
+
+    let original_mode = match device.ensure_normal_mode() {
+        Ok(mode) => mode,
+        Err(error) => {
+            let rollback = device.set_mode(saved_mode);
+            return match rollback {
+                Ok(()) => Err(format!("could not switch to normal onboard mode; original mode restored: {error}")),
+                Err(rollback_error) => Err(format!("could not switch to normal onboard mode: {error}; original mode rollback failed: {rollback_error}")),
+            };
+        }
+    };
+
+    for mapping in sidearm_mapping_records() {
+        if let Err(error) = device.write_raw_record(&mapping) {
+            let mut rollback_errors = Vec::new();
+            for original in &payload.records {
+                if let Err(rollback) = device.write_raw_record(original) {
+                    rollback_errors.push(rollback);
+                }
+            }
+            if let Err(rollback) = device.set_mode(original_mode) {
+                rollback_errors.push(rollback);
+            }
+            if rollback_errors.is_empty() {
+                return Err(format!("mapping failed and the original backup was restored: {error}"));
+            }
+            return Err(format!(
+                "mapping failed: {error}; rollback also had {} error(s): {}",
+                rollback_errors.len(),
+                rollback_errors.join("; ")
+            ));
+        }
     }
     Ok(())
 }
