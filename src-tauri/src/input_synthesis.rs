@@ -2159,12 +2159,12 @@ fn vk_to_evdev_key(code: u16) -> Option<evdev::KeyCode> {
         0x5B => KeyCode::KEY_LEFTMETA,
         0x5D => KeyCode::KEY_COMPOSE,
         // F1-F10 (contiguous in evdev: KEY_F1=59..KEY_F10=68)
-        0x70..=0x79 => KeyCode::new((code - 0x70 + KeyCode::KEY_F1.0) as u16),
+        0x70..=0x79 => KeyCode::new(code - 0x70 + KeyCode::KEY_F1.0),
         // F11-F12 (non-contiguous: KEY_F11=87, KEY_F12=88)
         0x7A => KeyCode::KEY_F11,
         0x7B => KeyCode::KEY_F12,
         // F13-F24 (non-contiguous: KEY_F13=183..KEY_F24=194)
-        0x7C..=0x87 => KeyCode::new((code - 0x7C + KeyCode::KEY_F13.0) as u16),
+        0x7C..=0x87 => KeyCode::new(code - 0x7C + KeyCode::KEY_F13.0),
         0x90 => KeyCode::KEY_NUMLOCK,
         0x91 => KeyCode::KEY_SCROLLLOCK,
         // Modifiers
