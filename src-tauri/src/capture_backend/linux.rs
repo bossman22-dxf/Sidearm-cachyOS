@@ -153,7 +153,7 @@ fn find_razer_naga_devices() -> Vec<std::path::PathBuf> {
 
     for (path, device) in evdev::enumerate() {
         let name = device.name().unwrap_or_default().to_ascii_lowercase();
-        if !name.contains("razer") || !name.contains("naga") {
+        if !name.contains("razer") || !name.contains("naga v2 hyperspeed") {
             continue;
         }
 
