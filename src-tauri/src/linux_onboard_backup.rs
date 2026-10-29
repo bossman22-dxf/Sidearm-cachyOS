@@ -276,6 +276,59 @@ fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
     }
 }
 
+fn sidearm_mapping_records() -> Vec<RawButtonRecord> {
+    let mut records = Vec::with_capacity(28);
+    for index in 0..12u8 {
+        let button_id = 0x40 + index;
+        let usage = 0x68 + index;
+        for layer in 0..=1 {
+            records.push(RawButtonRecord {
+                button_id,
+                layer,
+                bytes: [0x01, button_id, layer, 0x02, 0x02, 0x00, usage, 0, 0, 0],
+            });
+        }
+    }
+    for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
+        for layer in 0..=1 {
+            records.push(RawButtonRecord {
+                button_id,
+                layer,
+                bytes: [0x01, button_id, layer, 0x01, 0x01, mouse_button, 0, 0, 0, 0],
+            });
+        }
+    }
+    records
+}
+
+/// Apply the requested Sidearm convention after creating a complete backup.
+/// On any write/read-back error, attempt to restore every original record before
+/// returning. The backup remains untouched and can still be used by the CLI.
+pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
+    let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
+    validate_restore_payload(&backup.payload)?;
+    let device = LinuxOnboardDevice::open()?;
+    for mapping in sidearm_mapping_records() {
+        if let Err(error) = device.write_raw_record(&mapping) {
+            let mut rollback_errors = Vec::new();
+            for original in &backup.payload.records {
+                if let Err(rollback) = device.write_raw_record(original) {
+                    rollback_errors.push(rollback);
+                }
+            }
+            if rollback_errors.is_empty() {
+                return Err(format!("mapping failed and the original backup was restored: {error}"));
+            }
+            return Err(format!(
+                "mapping failed: {error}; rollback also had {} error(s): {}",
+                rollback_errors.len(),
+                rollback_errors.join("; ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Restore only a complete, validated backup for this exact model. Every
 /// record is written as its original raw ten-byte value and read back exactly.
 /// This is intentionally separate from the UI and can be called by the recovery
@@ -294,10 +347,12 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 
 /// Create a new backup file from the connected verified Naga. Existing files
 /// are never replaced; the caller must choose a fresh destination.
-pub fn backup_connected_mouse(path: &Path) -> Result<(), String> {
+pub fn backup_connected_mouse(path: &Path) -> Result<bool, String> {
     let device = LinuxOnboardDevice::open()?;
     let backup = device.create_backup()?;
-    backup.save_new(path).map_err(|e| e.to_string())
+    let complete = backup.payload.scan_complete;
+    backup.save_new(path).map_err(|e| e.to_string())?;
+    Ok(complete)
 }
 
 fn checksum(payload: &[u8; PAYLOAD_LEN]) -> u8 {
@@ -344,6 +399,16 @@ mod tests {
             read_failures: vec![],
             scan_complete: true,
         }
+    }
+
+    #[test]
+    fn sidearm_mapping_targets_f13_to_f24_and_preserves_real_mouse_buttons() {
+        let records = sidearm_mapping_records();
+        assert_eq!(records.len(), 28);
+        assert_eq!(records[0].bytes, [1, 0x40, 0, 2, 2, 0, 0x68, 0, 0, 0]);
+        assert_eq!(records[23].bytes, [1, 0x4b, 1, 2, 2, 0, 0x73, 0, 0, 0]);
+        assert_eq!(records[24].bytes, [1, 0x34, 0, 1, 1, 4, 0, 0, 0, 0]);
+        assert_eq!(records[27].bytes, [1, 0x35, 1, 1, 1, 5, 0, 0, 0, 0]);
     }
 
     #[test]
