@@ -14,7 +14,7 @@ use std::{
 use tempfile::NamedTempFile;
 
 pub const FORMAT_ID: &str = "sidearm-onboard-backup";
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 pub const BUTTON_RECORD_LEN: usize = 10;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
