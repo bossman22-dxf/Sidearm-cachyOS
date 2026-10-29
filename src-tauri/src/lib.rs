@@ -5,7 +5,6 @@ mod capture_backend;
 mod chord;
 mod command_error;
 mod config;
-#[cfg(target_os = "windows")]
 mod device_catalog;
 #[cfg(target_os = "windows")]
 mod exe_icon;
@@ -16,6 +15,8 @@ mod log_cleanup;
 #[cfg(target_os = "windows")]
 mod mouse_memory;
 mod onboard_backup;
+#[cfg(target_os = "linux")]
+pub mod linux_onboard_backup;
 #[cfg(target_os = "windows")]
 mod mouse_offline;
 #[cfg(target_os = "windows")]
@@ -2870,6 +2871,18 @@ async fn get_device_report() -> Result<String, CommandError> {
     .map_err(|e| CommandError::internal(format!("device report task failed: {e}")))?
 }
 
+/// Creates a lossless read-only backup of the connected Naga's onboard records.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn create_onboard_backup(path: String) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        linux_onboard_backup::backup_connected_mouse(std::path::Path::new(&path))
+            .map_err(|message| CommandError::new("onboard_backup_failed", message, None))
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("onboard backup task failed: {e}")))?
+}
+
 /// Opens a new GitHub issue for a device report in the browser. The report
 /// itself goes through the clipboard: it is too long for a URL.
 #[cfg(target_os = "windows")]
@@ -3742,6 +3755,8 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(MacroRecorder::new())))
         .invoke_handler(tauri::generate_handler![
             export_verification_session,
+            #[cfg(target_os = "linux")]
+            create_onboard_backup,
             load_config,
             save_config,
             get_app_paths,
