@@ -39,22 +39,13 @@ fn main() -> ExitCode {
                 }
             }
             "--validate-onboard-backup" => {
-                match sidearm_lib::onboard_backup::OnboardBackup::load_and_validate(path) {
-                    Ok(backup) => {
-                        println!(
-                            "Valid backup: {} raw records; complete scan: {}",
-                            backup.payload.records.len(),
-                            backup.payload.scan_complete
-                        );
-                        if backup.payload.scan_complete {
-                            ExitCode::SUCCESS
-                        } else {
-                            eprintln!("This backup is incomplete and cannot be restored.");
-                            ExitCode::FAILURE
-                        }
+                match sidearm_lib::linux_onboard_backup::validate_backup_for_restore(path) {
+                    Ok(record_count) => {
+                        println!("Valid, complete, restorable backup: {record_count} raw records.");
+                        ExitCode::SUCCESS
                     }
                     Err(error) => {
-                        eprintln!("Backup validation failed: {error}");
+                        eprintln!("Backup is not restorable: {error}");
                         ExitCode::FAILURE
                     }
                 }
