@@ -55,3 +55,25 @@ The mapping utility requires the exact confirmation word `APPLY`. The Tauri Mous
 ## Current verification boundary
 
 Automated protocol/container tests and Linux CI must pass before considering the implementation build-ready. Hardware read, backup, and restore must still be tested on the actual Naga V2 HyperSpeed receiver. A successful build alone does not establish hardware compatibility or safe restoration.
+
+
+## First physical-device smoke test
+
+Do this only after the Linux build and unit tests pass. Keep the original backup file unchanged.
+
+1. Stop Sidearm's capture runtime so it releases the Naga keyboard event device.
+2. Create a backup with the standalone utility:
+   ```fish
+   cargo run --manifest-path src-tauri/Cargo.toml --bin sidearm-recover -- --backup-onboard-memory "$HOME/naga-before-sidearm.sidearm-backup.json"
+   ```
+3. Require a successful exit, then validate the file:
+   ```fish
+   cargo run --manifest-path src-tauri/Cargo.toml --bin sidearm-recover -- --validate-onboard-backup "$HOME/naga-before-sidearm.sidearm-backup.json"
+   ```
+   If the scan is incomplete or validation fails, do not apply a mapping.
+4. Apply the fixed mapping from the Mouse workspace (it creates a fresh backup first), or use the standalone utility with the exact `APPLY` confirmation.
+5. With Sidearm's capture runtime stopped, inspect the Naga's input events using `evtest`. Confirm the twelve thumb buttons emit `KEY_F13` through `KEY_F24`, and M4/M5 emit `BTN_SIDE` and `BTN_EXTRA` rather than keyboard keys.
+6. Start Sidearm, verify all twelve thumb buttons are captured, and confirm M4/M5 remain ordinary mouse buttons.
+7. If any mapping is wrong, restore the saved pre-mapping backup with the exact `RESTORE` confirmation.
+
+The input event numbers can change after reconnecting the receiver; identify devices by their displayed name rather than assuming a fixed `eventN`. If the mapping operation reports a rollback error, leave the mouse connected and use the recovery utility again with the original backup.
