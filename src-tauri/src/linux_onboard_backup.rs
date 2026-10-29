@@ -265,6 +265,7 @@ fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
     if !payload.scan_complete || !payload.read_failures.is_empty() || payload.records.len() != 42 {
         return Err("refusing to restore: backup is incomplete; all 42 button/layer records must be present".into());
     }
+
     let identity = &payload.device;
     if identity.vendor_id != VID
         || identity.product_id != PID
@@ -273,11 +274,16 @@ fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
         || identity.protocol != "razer-command-class-v1"
     {
         return Err("refusing to restore: backup belongs to a different device or protocol".into());
-}
+    }
+
     let expected: BTreeSet<(u8, u8)> = [
-    0x40u8,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x0b,0x0c,
-    0x01,0x02,0x03,0x09,0x0a,0x34,0x35,
-].into_iter().flat_map(|button| [(button, 0), (button, 1)]).collect();
+        0x40u8, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x0b, 0x0c,
+        0x01, 0x02, 0x03, 0x09, 0x0a, 0x34, 0x35,
+    ]
+    .into_iter()
+    .flat_map(|button| [(button, 0), (button, 1)])
+    .collect();
+
     for record in &payload.records {
         if record.layer > 1
             || record.bytes[0] != 0x01
@@ -288,62 +294,16 @@ fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
             return Err("refusing to restore: backup contains an invalid raw record".into());
         }
     }
-    let actual: BTreeSet<(u8, u8)> = payload.records.iter().map(|r| (r.button_id, r.layer)).collect();
+
+    let actual: BTreeSet<(u8, u8)> = payload
+        .records
+        .iter()
+        .map(|record| (record.button_id, record.layer))
+        .collect();
     if actual != expected {
         return Err("refusing to restore: backup does not contain the complete expected button/layer address set".into());
     }
-}
 
-fn sidearm_mapping_records() -> Vec<RawButtonRecord> {
-    let mut records = Vec::with_capacity(28);
-    for index in 0..12u8 {
-        let button_id = 0x40 + index;
-        let usage = 0x68 + index;
-        for layer in 0..=1 {
-            records.push(RawButtonRecord {
-                button_id,
-                layer,
-                bytes: [0x01, button_id, layer, 0x02, 0x02, 0x00, usage, 0, 0, 0],
-            });
-        }
-    }
-    for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
-        for layer in 0..=1 {
-            records.push(RawButtonRecord {
-                button_id,
-                layer,
-                bytes: [0x01, button_id, layer, 0x01, 0x01, mouse_button, 0, 0, 0, 0],
-            });
-        }
-    }
-    records
-}
-
-/// Apply the requested Sidearm convention after creating a complete backup.
-/// On any write/read-back error, attempt to restore every original record before
-/// returning. The backup remains untouched and can still be used by the CLI.
-pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
-    let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
-    validate_restore_payload(&backup.payload)?;
-    let device = LinuxOnboardDevice::open()?;
-    for mapping in sidearm_mapping_records() {
-        if let Err(error) = device.write_raw_record(&mapping) {
-            let mut rollback_errors = Vec::new();
-            for original in &backup.payload.records {
-                if let Err(rollback) = device.write_raw_record(original) {
-                    rollback_errors.push(rollback);
-                }
-            }
-            if rollback_errors.is_empty() {
-                return Err(format!("mapping failed and the original backup was restored: {error}"));
-            }
-            return Err(format!(
-                "mapping failed: {error}; rollback also had {} error(s): {}",
-                rollback_errors.len(),
-                rollback_errors.join("; ")
-            ));
-        }
-    }
     Ok(())
 }
 
