@@ -1,6 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::io::{self, Write};
+
 use std::{
     env,
-    io::{self, Write},
     path::Path,
     process::ExitCode,
 };
