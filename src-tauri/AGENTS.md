@@ -43,8 +43,8 @@ The Rust backend: low-level keyboard capture, Razer-encoding detection, action e
 
 ## Verification
 
-- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` (zero warnings) and `cargo test --manifest-path src-tauri/Cargo.toml`.
-- `cargo` is at `C:\Users\User\.cargo\bin\cargo.exe` (not on the bash PATH).
+- `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` (zero warnings) and `cargo test --manifest-path src-tauri/Cargo.toml` on Linux and Windows CI.
+- Linux CI also builds the Tauri AppImage; manual KDE Plasma Wayland and hardware smoke tests remain required.
 
 ## Child DOX Index
 
