@@ -120,3 +120,4 @@ Run before declaring a code change done:
 - `docs/LINUX-PORT-SAFETY-AND-ACCESSIBILITY.md` — required Linux mouse-backup/recovery safety gates and keyboard-accessibility acceptance criteria
 - `docs/LINUX-ONBOARD-RECOVERY.md` — backup, validation, confirmed mapping, and standalone recovery procedures
 - `docs/LINUX-HID-PERMISSIONS.md` — least-privilege HID access for the Naga V2 HyperSpeed
+- `docs/LINUX-KDE-WAYLAND.md` — native KWin foreground-window integration and manual verification
