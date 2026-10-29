@@ -71,7 +71,7 @@ enum RegisteredTask {
     Legacy { path: String },
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 impl RegisteredTask {
     fn path(&self) -> &str {
         match self {
@@ -425,7 +425,7 @@ fn xml_unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 fn paths_equal(a: &Path, b: &Path) -> bool {
     if let (Ok(ca), Ok(cb)) = (a.canonicalize(), b.canonicalize()) {
         return ca == cb;
