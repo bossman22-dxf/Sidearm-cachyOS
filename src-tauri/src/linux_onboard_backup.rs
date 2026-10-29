@@ -272,6 +272,7 @@ if actual != expected {
 /// CLI when the main application cannot start.
 pub fn restore_backup(path: &Path) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
+    let payload = &backup.payload;
     validate_restore_payload(payload)?;
 
     let device = LinuxOnboardDevice::open()?;
