@@ -13,7 +13,8 @@ The backup also records live DPI and polling rate when those reads succeed. The 
 - Restore writes each original raw record and immediately verifies an exact byte-for-byte read-back. It stops on the first failure; a failed restore may therefore be partial. Keep the original backup file unchanged.
 - The standalone recovery utility asks the operator to type `RESTORE` before it writes anything.
 - Never run Sidearm as root. If HID access is denied, configure a narrow user-session udev permission for this exact VID:PID; do not use world-writable HID nodes.
-- No Linux onboard button-mapping editor is enabled yet. Do not add one until backup/restore has been tested on the actual mouse.
+- The Mouse workspace exposes one fixed mapping action only: it first saves a complete backup, then requires explicit confirmation, then verifies every write and attempts rollback on failure. It does not expose arbitrary raw records or arbitrary button categories.
+- This branch has not yet passed physical-device testing. Do not use the mapping action on the only copy of an important mouse configuration until the backup, restore, and mapping smoke tests have been completed on the actual receiver.
 
 ## Build and use
 
