@@ -1,8 +1,8 @@
 //! Platform-specific window detection (Linux).
 //!
-//! Provides foreground window capture via a GNOME Shell D-Bus extension on
-//! Wayland, falling back to `active-win-pos-rs` (XCB) on X11. Process
-//! elevation checks use `/proc`.
+//! Provides native foreground-window capture on KDE Plasma Wayland through a
+//! KWin script and a private session-D-Bus service. GNOME Wayland uses its
+//! focused-window extension; X11 falls back to `active-win-pos-rs` (XCB).
 
 #![allow(unused_imports)]
 
@@ -18,7 +18,6 @@ use crate::window_capture::RawWindowCapture;
 
 const KWIN_BUS_NAME: &str = "org.sidearm.Sidearm";
 const KWIN_OBJECT_PATH: &str = "/org/sidearm/Focus";
-const KWIN_INTERFACE: &str = "org.sidearm.Focus";
 const KWIN_PLUGIN_NAME: &str = "sidearm-focus-monitor";
 
 static KDE_WINDOW_CACHE: OnceLock<Arc<Mutex<Option<RawWindowCapture>>>> = OnceLock::new();
