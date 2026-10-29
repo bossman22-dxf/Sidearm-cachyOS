@@ -489,18 +489,18 @@ pub fn apply_profile_mouse_settings(profile: &crate::config::Profile) {
                 if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
                     return Ok(());
                 }
-                if let Some(value) = dpi {
-                    if device.dpi()? != value {
-                        device.set_dpi_live(value)?;
-                    }
+                if let Some(value) = dpi
+                    && device.dpi()? != value
+                {
+                    device.set_dpi_live(value)?;
                 }
                 if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
                     return Ok(());
                 }
-                if let Some(value) = poll_rate_hz {
-                    if device.poll_rate_hz()? != value {
-                        device.write_poll_rate_hz(value)?;
-                    }
+                if let Some(value) = poll_rate_hz
+                    && device.poll_rate_hz()? != value
+                {
+                    device.write_poll_rate_hz(value)?;
                 }
                 Ok(())
             });
