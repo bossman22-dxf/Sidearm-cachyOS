@@ -15,6 +15,7 @@ mod input_synthesis;
 mod log_cleanup;
 #[cfg(target_os = "windows")]
 mod mouse_memory;
+mod onboard_backup;
 #[cfg(target_os = "windows")]
 mod mouse_offline;
 #[cfg(target_os = "windows")]
