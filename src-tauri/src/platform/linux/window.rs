@@ -139,6 +139,28 @@ pub(crate) fn start_kde_focus_monitor(config_dir: &Path) {
     }
 }
 
+/// Unload the KWin script before Sidearm exits so it does not keep calling
+/// a D-Bus service that no longer exists.
+pub(crate) fn stop_kde_focus_monitor() {
+    if !KDE_MONITOR_STARTED.load(Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(connection) = zbus::blocking::Connection::session()
+        && let Ok(proxy) = zbus::blocking::Proxy::new(
+            &connection,
+            "org.kde.KWin",
+            "/Scripting",
+            "org.kde.kwin.Scripting",
+        )
+    {
+        let _ = proxy.call::<_, _, ()>("unloadScript", &KWIN_PLUGIN_NAME);
+    }
+    KDE_MONITOR_STARTED.store(false, Ordering::SeqCst);
+    if let Some(cache) = KDE_WINDOW_CACHE.get() {
+        *cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 fn is_kde_wayland() -> bool {
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         return false;
