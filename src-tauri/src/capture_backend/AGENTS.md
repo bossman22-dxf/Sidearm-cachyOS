@@ -9,7 +9,7 @@ The low-level input hooks and the Razer-encoding detector: turns raw key events 
 - `windows.rs` — `WH_KEYBOARD_LL` hook, `WH_MOUSE_LL` hook (software Hypershift) plus its `hyper-inject` right-click thread and liveness check, encoding-chord detection, modifier buffering, hook-health probe, the capture worker + bounded event channel, foreground watcher.
 - `consumer.rs` — the consumer-signal reader (helper process): opens the config model's consumer collection (`mouse_memory::consumer_collection_paths` via `open_first`, shared access next to Razer's driver), overlapped `ReadFile`, reopens every 2 s after the dongle sleeps or is unplugged (releasing every held button first), and translates reports into the keyboard hook's own lines. Pure parts (`held_usages`, `Translator`, `repeat_timing`) are unit-tested.
 - `mod.rs` — `process_encoded_key_event`: profile resolution, action lookup, dispatch, hold/release handling.
-- `linux.rs` — Linux evdev capture. Device discovery must select the Naga thumb-keyboard collection by its key capability cluster, never the first same-named HID collection; only this keyboard interface is grabbed, leaving pointer and BTN_SIDE/BTN_EXTRA interfaces native.
+- `linux.rs` — Linux evdev capture. Device discovery must select the Naga thumb-keyboard collection by its key capability cluster, never the first same-named HID collection; only this keyboard interface is grabbed, leaving pointer and BTN_SIDE/BTN_EXTRA interfaces native. The fixed Linux onboard mapping sends the twelve thumb controls as F13–F24 and the top-panel D+/D− controls as Alt+F23/Alt+F24; the capture loop tracks right-Alt and F23/F24 on this keyboard interface.
 
 ## Local Contracts
 
