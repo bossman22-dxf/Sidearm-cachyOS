@@ -4,7 +4,7 @@
 
 The native Linux backup path currently targets only the verified Razer Naga V2 HyperSpeed receiver (USB VID:PID `1532:00b4`, vendor HID interface 0). It reads 21 known addressable button IDs across layers 0 and 1, preserving each ten-byte record exactly. Other Razer models and Bluetooth are not supported by this path.
 
-The backup also records live DPI, polling rate, and the device mode before any Sidearm operation. Restore writes the raw button records and returns the device to that saved mode; it does not restore DPI, polling rate, or battery state. Applying the Sidearm mapping switches the device to normal/onboard mode and leaves it there so the firmware emits F13–F24.
+The backup also records live DPI, polling rate, and the device mode before any Sidearm operation. Restore writes the raw button records and returns the device to that saved mode; it does not restore DPI, polling rate, or battery state. Applying the Sidearm mapping switches the device to normal/onboard mode and leaves it there so the firmware emits the configured thumb and top-panel signals.
 
 ## Safety
 
@@ -44,7 +44,7 @@ cargo run --manifest-path src-tauri/Cargo.toml --bin sidearm-recover -- --restor
 
 The restore utility requires the exact confirmation word `RESTORE`.
 
-To apply Sidearm’s standard mapping (12 thumb buttons to F13–F24; M4/M5 kept as native mouse buttons 4/5), use a complete backup file. The utility verifies every write and attempts to roll the original backup back if a write fails:
+To apply Sidearm’s standard mapping, use a complete backup file. It maps the twelve thumb buttons to F13–F24, maps the top-panel buttons D+ and D− to Alt+F23 and Alt+F24, and keeps wheel-tilt M4/M5 as native mouse buttons 4/5. The utility verifies every write and attempts to roll the original backup back if a write fails:
 
 ```fish
 cargo run --manifest-path src-tauri/Cargo.toml --bin sidearm-recover -- --apply-sidearm-mapping "$HOME/naga-v2-hyperspeed.sidearm-backup.json"
@@ -72,8 +72,8 @@ Do this only after the Linux build and unit tests pass. Keep the original backup
    ```
    If the scan is incomplete or validation fails, do not apply a mapping.
 4. Apply the fixed mapping from the Mouse workspace (it creates a fresh backup first), or use the standalone utility with the exact `APPLY` confirmation.
-5. With Sidearm's capture runtime stopped, inspect the Naga's input events using `evtest`. Confirm the twelve thumb buttons emit `KEY_F13` through `KEY_F24`, and M4/M5 emit `BTN_SIDE` and `BTN_EXTRA` rather than keyboard keys.
-6. Start Sidearm, verify all twelve thumb buttons are captured, and confirm M4/M5 remain ordinary mouse buttons.
+5. With Sidearm's capture runtime stopped, inspect the Naga's input events using `evtest`. Confirm the twelve thumb buttons emit `KEY_F13` through `KEY_F24`; D+ emits right-Alt plus `KEY_F23`; D− emits right-Alt plus `KEY_F24`; and wheel-tilt M4/M5 emit `BTN_SIDE` and `BTN_EXTRA` rather than keyboard keys.
+6. Start Sidearm, verify all twelve thumb buttons and both top-panel buttons are captured, and confirm wheel-tilt M4/M5 remain ordinary mouse buttons.
 7. If any mapping is wrong, restore the saved pre-mapping backup with the exact `RESTORE` confirmation.
 
 The input event numbers can change after reconnecting the receiver; identify devices by their displayed name rather than assuming a fixed `eventN`. If the mapping operation reports a rollback error, leave the mouse connected and use the recovery utility again with the original backup.
