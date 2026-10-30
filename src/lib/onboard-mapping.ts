@@ -61,9 +61,12 @@ export function isBuiltinControl(config: AppConfig, controlId: ControlId | strin
 
 /** Live mouse settings; the mouse stores them, so they are not in the config. */
 export interface MouseSettings {
-  batteryPercent: number;
-  dpi: number;
-  pollRateHz: number;
+  /** Missing when the device did not return this individual reading. */
+  batteryPercent?: number | null;
+  dpi?: number | null;
+  pollRateHz?: number | null;
+  /** Per-setting errors; one failed query must not hide successful readings. */
+  warnings?: string[];
 }
 
 /** Battery reading from the guard (`mouse_battery`). */
