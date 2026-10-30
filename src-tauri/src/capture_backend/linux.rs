@@ -536,3 +536,19 @@ fn run_foreground_watcher(
 pub fn capture_helper_main() {
     log::info!("[capture-helper] Linux capture runs in-process, helper not needed.");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn top_auxiliary_buttons_encode_as_alt_f23_and_alt_f24() {
+        let mut modifiers = ModifierState::default();
+        assert!(modifiers.apply_event(KEY_RIGHTALT, true));
+
+        let d_plus = evdev_code_to_key_name(KEY_F23).expect("F23 is a captured key");
+        let d_minus = evdev_code_to_key_name(KEY_F24).expect("F24 is a captured key");
+        assert_eq!(format!("{}{}", modifiers.prefix(), d_plus), "Alt+F23");
+        assert_eq!(format!("{}{}", modifiers.prefix(), d_minus), "Alt+F24");
+    }
+}
