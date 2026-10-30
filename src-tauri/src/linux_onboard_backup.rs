@@ -24,8 +24,9 @@ const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
 const USAGE_MOUSE: u16 = 0x02;
 const REPORT_ID: u8 = 0x03;
 const PAYLOAD_LEN: usize = 90;
-const COMMAND_STATUS_OK: u8 = 0x02;
+const COMMAND_STATUS_NEW: u8 = 0x00;
 const COMMAND_STATUS_BUSY: u8 = 0x01;
+const COMMAND_STATUS_OK: u8 = 0x02;
 const COMMAND_STATUS_NO_RESPONSE: u8 = 0x04;
 const CLASS_CONTROL: u8 = 0x00;
 const CLASS_BUTTON: u8 = 0x02;
@@ -43,9 +44,9 @@ const CMD_SET_MODE: u8 = 0x04;
 const MODE_NORMAL: u8 = 0x00;
 const MODE_CONFIRM_ATTEMPTS: u32 = 4;
 const CMD_GET_BATTERY: u8 = 0x80;
-const BUSY_RETRIES: usize = 8;
+const RESPONSE_POLL_ATTEMPTS: usize = 40;
 const SETTLE: Duration = Duration::from_millis(50);
-const BUSY_WAIT: Duration = Duration::from_millis(200);
+const RESPONSE_POLL_WAIT: Duration = Duration::from_millis(25);
 
 /// Serializes the report SET/GET exchange across all backup requests.
 static DEVICE_LOCK: Mutex<()> = Mutex::new(());
@@ -54,9 +55,10 @@ static PROFILE_SWITCHES: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinuxMouseSettings {
-    pub battery_percent: u8,
-    pub dpi: u16,
-    pub poll_rate_hz: u16,
+    pub battery_percent: Option<u8>,
+    pub dpi: Option<u16>,
+    pub poll_rate_hz: Option<u16>,
+    pub warnings: Vec<String>,
 }
 
 pub struct LinuxOnboardDevice {
@@ -68,6 +70,99 @@ fn is_target_hid_collection(interface_number: i32, usage_page: u16, usage: u16) 
     interface_number == INTERFACE
         && usage_page == USAGE_PAGE_GENERIC_DESKTOP
         && usage == USAGE_MOUSE
+}
+
+/// A matching feature report can still be pending: 0x00 is "new command"
+/// and 0x01 is "busy". Both require another GET_REPORT, not another SET_REPORT.
+fn response_is_pending(status: u8) -> bool {
+    matches!(status, COMMAND_STATUS_NEW | COMMAND_STATUS_BUSY)
+}
+
+fn reply_matches(request: &[u8; PAYLOAD_LEN], reply: &[u8; PAYLOAD_LEN]) -> bool {
+    reply[1] == request[1] && reply[6..8] == request[6..8]
+}
+
+/// Poll the reply to one already-sent command. The command is never resent while
+/// the receiver is still processing it; only GET_REPORT is repeated.
+fn wait_for_command_reply<F, P>(
+    request: &[u8; PAYLOAD_LEN],
+    mut read_reply: F,
+    mut pause: P,
+) -> Result<[u8; PAYLOAD_LEN], String>
+where
+    F: FnMut() -> Result<[u8; PAYLOAD_LEN], String>,
+    P: FnMut(Duration),
+{
+    let class = request[6];
+    let command = request[7];
+    let mut last_status = None;
+
+    for attempt in 0..RESPONSE_POLL_ATTEMPTS {
+        let reply = read_reply()?;
+        last_status = Some(reply[0]);
+
+        if reply_matches(request, &reply) {
+            match reply[0] {
+                COMMAND_STATUS_OK => return Ok(reply),
+                status if response_is_pending(status) => {}
+                COMMAND_STATUS_NO_RESPONSE => {
+                    return Err("mouse did not respond (asleep or out of range)".into());
+                }
+                0x03 => {
+                    return Err(format!("HID query {class:#04x}/{command:#04x} was rejected (status 0x03)"));
+                }
+                0x05 => {
+                    return Err(format!("HID query {class:#04x}/{command:#04x} is not supported (status 0x05)"));
+                }
+                status => {
+                    return Err(format!("HID query {class:#04x}/{command:#04x} returned unknown status {status:#04x}"));
+                }
+            }
+        }
+
+        if attempt + 1 < RESPONSE_POLL_ATTEMPTS {
+            pause(RESPONSE_POLL_WAIT);
+        }
+    }
+
+    let last = last_status
+        .map(|status| format!("; last response status {status:#04x}"))
+        .unwrap_or_default();
+    Err(format!(
+        "HID query {class:#04x}/{command:#04x} did not receive a completed matching reply after {RESPONSE_POLL_ATTEMPTS} response reads{last}"
+    ))
+}
+
+/// Keeps successful live settings even when another individual query fails.
+fn optional_setting<T>(
+    label: &str,
+    result: Result<T, String>,
+    warnings: &mut Vec<String>,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            warnings.push(format!("{label}: {error}"));
+            None
+        }
+    }
+}
+
+fn collect_mouse_settings(
+    battery: Result<u8, String>,
+    dpi: Result<u16, String>,
+    poll_rate_hz: Result<u16, String>,
+) -> LinuxMouseSettings {
+    let mut warnings = Vec::new();
+    let battery_percent = optional_setting("Battery", battery, &mut warnings);
+    let dpi = optional_setting("DPI", dpi, &mut warnings);
+    let poll_rate_hz = optional_setting("Polling rate", poll_rate_hz, &mut warnings);
+    LinuxMouseSettings {
+        battery_percent,
+        dpi,
+        poll_rate_hz,
+        warnings,
+    }
 }
 
 impl LinuxOnboardDevice {
@@ -124,41 +219,41 @@ impl LinuxOnboardDevice {
         request[8..8 + args.len()].copy_from_slice(args);
         request[88] = checksum(&request);
 
-        for attempt in 0..BUSY_RETRIES {
-            let mut output = [0u8; PAYLOAD_LEN + 1];
-            output[0] = REPORT_ID;
-            output[1..].copy_from_slice(&request);
-            self.device
-                .send_feature_report(&output)
-                .map_err(|e| format!("Could not send read-only HID query {class:#04x}/{command:#04x}: {e}"))?;
-            thread::sleep(SETTLE);
+        let mut output = [0u8; PAYLOAD_LEN + 1];
+        output[0] = REPORT_ID;
+        output[1..].copy_from_slice(&request);
+        self.device
+            .send_feature_report(&output)
+            .map_err(|e| format!("Could not send HID command {class:#04x}/{command:#04x}: {e}"))?;
+        thread::sleep(SETTLE);
 
-            let mut input = [0u8; PAYLOAD_LEN + 1];
-            input[0] = REPORT_ID;
-            let bytes_read = self.device
-                .get_feature_report(&mut input)
-                .map_err(|e| format!("Could not read HID reply {class:#04x}/{command:#04x}: {e}"))?;
-            if bytes_read != PAYLOAD_LEN + 1 {
-                return Err(format!("HID reply {class:#04x}/{command:#04x} was truncated: expected {} bytes, got {bytes_read}", PAYLOAD_LEN + 1));
-            }
-            let mut reply = [0u8; PAYLOAD_LEN];
-            reply.copy_from_slice(&input[1..]);
-            if reply[6..8] != request[6..8] {
-                continue;
-            }
-            match reply[0] {
-                COMMAND_STATUS_OK => return Ok(reply),
-                COMMAND_STATUS_BUSY if attempt + 1 < BUSY_RETRIES => thread::sleep(BUSY_WAIT),
-                COMMAND_STATUS_NO_RESPONSE => return Err("mouse did not respond (asleep or out of range)".into()),
-                status => return Err(format!("HID query {class:#04x}/{command:#04x} returned status {status:#04x}")),
-            }
+        wait_for_command_reply(
+            &request,
+            || self.read_command_reply(class, command),
+            thread::sleep,
+        )
+    }
+
+    fn read_command_reply(&self, class: u8, command: u8) -> Result<[u8; PAYLOAD_LEN], String> {
+        let mut input = [0u8; PAYLOAD_LEN + 1];
+        input[0] = REPORT_ID;
+        let bytes_read = self.device
+            .get_feature_report(&mut input)
+            .map_err(|e| format!("Could not read HID reply {class:#04x}/{command:#04x}: {e}"))?;
+        if bytes_read != PAYLOAD_LEN + 1 {
+            return Err(format!(
+                "HID reply {class:#04x}/{command:#04x} was truncated: expected {} bytes, got {bytes_read}",
+                PAYLOAD_LEN + 1
+            ));
         }
-        Err(format!("HID query {class:#04x}/{command:#04x} did not receive a matching reply"))
+        let mut reply = [0u8; PAYLOAD_LEN];
+        reply.copy_from_slice(&input[1..]);
+        Ok(reply)
     }
 
     pub fn set_dpi(&self, dpi: u16) -> Result<LinuxMouseSettings, String> {
         self.write_dpi(dpi, VARSTORE)?;
-        self.settings()
+        Ok(self.settings())
     }
 
     fn set_dpi_live(&self, dpi: u16) -> Result<(), String> {
@@ -180,7 +275,7 @@ impl LinuxOnboardDevice {
 
     pub fn set_poll_rate_hz(&self, hz: u16) -> Result<LinuxMouseSettings, String> {
         self.write_poll_rate_hz(hz)?;
-        self.settings()
+        Ok(self.settings())
     }
 
     fn write_poll_rate_hz(&self, hz: u16) -> Result<(), String> {
@@ -227,13 +322,8 @@ impl LinuxOnboardDevice {
         Ok(before)
     }
 
-    pub fn settings(&self) -> Result<LinuxMouseSettings, String> {
-        let battery_reply = self.command(CLASS_POWER, CMD_GET_BATTERY, &[0x00, 0x00])?;
-        Ok(LinuxMouseSettings {
-            battery_percent: ((u16::from(battery_reply[9]) * 100 + 127) / 255) as u8,
-            dpi: self.dpi()?,
-            poll_rate_hz: self.poll_rate_hz()?,
-        })
+    pub fn settings(&self) -> LinuxMouseSettings {
+        collect_mouse_settings(self.battery_percent(), self.dpi(), self.poll_rate_hz())
     }
 
     fn raw_button_record(&self, button_id: u8, layer: u8) -> Result<[u8; 10], String> {
@@ -242,6 +332,11 @@ impl LinuxOnboardDevice {
         let mut record = [0u8; 10];
         record.copy_from_slice(&reply[8..18]);
         Ok(record)
+    }
+
+    fn battery_percent(&self) -> Result<u8, String> {
+        let reply = self.command(CLASS_POWER, CMD_GET_BATTERY, &[0x00, 0x00])?;
+        Ok(((u16::from(reply[9]) * 100 + 127) / 255) as u8)
     }
 
     fn dpi(&self) -> Result<u16, String> {
@@ -409,7 +504,7 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 }
 
 fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
-    let mut records = Vec::with_capacity(28);
+    let mut records = Vec::with_capacity(32);
     for index in 0..12u8 {
         let button_id = 0x40 + index;
         let usage = 0x68 + index;
@@ -429,6 +524,27 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
             records.push(record);
         }
     }
+    // The top panel buttons are keyboard controls, not mouse-button events.
+    // Sidearm's encoder map identifies them as Alt+F23 and Alt+F24. Their
+    // records have no vendor slot, but the command-class write path addresses
+    // them directly. Write both layers so stale firmware actions cannot leak
+    // through while Sidearm is running.
+    for (button_id, usage) in [(0x0b, 0x72), (0x0c, 0x73)] {
+        for layer in 0..=1 {
+            let mut record = payload
+                .records
+                .iter()
+                .find(|record| record.button_id == button_id && record.layer == layer)
+                .cloned()
+                .ok_or_else(|| format!("backup is missing top button {button_id:#04x} layer {layer}"))?;
+            record.bytes[3] = 0x02;
+            record.bytes[4] = 0x02;
+            record.bytes[5] = 0x40; // right Alt, as confirmed by the device's key-record format
+            record.bytes[6] = usage;
+            records.push(record);
+        }
+    }
+
     for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
         for layer in 0..=1 {
             let mut record = payload
@@ -609,11 +725,20 @@ mod tests {
             record.bytes[9] = 0xbb;
         }
         let records = sidearm_mapping_records(&payload).unwrap();
-        assert_eq!(records.len(), 28);
+        assert_eq!(records.len(), 32);
         assert_eq!(&records[0].bytes[3..7], &[2, 2, 0, 0x68]);
         assert_eq!(&records[23].bytes[3..7], &[2, 2, 0, 0x73]);
-        assert_eq!(&records[24].bytes[3..6], &[1, 1, 4]);
-        assert_eq!(&records[27].bytes[3..6], &[1, 1, 5]);
+        // D+ and D− are top-panel key buttons: Alt+F23 and Alt+F24.
+        assert_eq!(records[24].button_id, 0x0b);
+        assert_eq!(&records[24].bytes[3..7], &[2, 2, 0x40, 0x72]);
+        assert_eq!(records[26].button_id, 0x0c);
+        assert_eq!(&records[26].bytes[3..7], &[2, 2, 0x40, 0x73]);
+        // Both layers receive the same physical signals.
+        assert_eq!(&records[25].bytes[3..7], &[2, 2, 0x40, 0x72]);
+        assert_eq!(&records[27].bytes[3..7], &[2, 2, 0x40, 0x73]);
+        // Wheel-tilt M4/M5 remain distinct native mouse-button outputs.
+        assert_eq!(&records[28].bytes[3..6], &[1, 1, 4]);
+        assert_eq!(&records[31].bytes[3..6], &[1, 1, 5]);
         for record in &records {
             let original = payload.records.iter().find(|item| item.button_id == record.button_id && item.layer == record.layer).unwrap();
             assert_eq!(&record.bytes[7..10], &original.bytes[7..10]);
@@ -661,6 +786,113 @@ mod tests {
         payload[8..11].copy_from_slice(&[1, 0x40, 0]);
         payload[88] = checksum(&payload);
         assert_eq!(payload[88], payload[2..88].iter().fold(0, |a, b| a ^ b));
+    }
+
+    #[test]
+    fn new_and_busy_statuses_require_more_get_report_reads() {
+        assert!(response_is_pending(COMMAND_STATUS_NEW));
+        assert!(response_is_pending(COMMAND_STATUS_BUSY));
+        for status in [COMMAND_STATUS_OK, 0x03, COMMAND_STATUS_NO_RESPONSE, 0x05] {
+            assert!(!response_is_pending(status), "status {status:#04x} is final");
+        }
+    }
+
+    fn battery_request() -> [u8; PAYLOAD_LEN] {
+        let mut request = [0u8; PAYLOAD_LEN];
+        request[1] = 0x1f;
+        request[5] = 2;
+        request[6] = CLASS_POWER;
+        request[7] = CMD_GET_BATTERY;
+        request[8..10].copy_from_slice(&[0, 0]);
+        request[88] = checksum(&request);
+        request
+    }
+
+    fn response_for(request: &[u8; PAYLOAD_LEN], status: u8) -> [u8; PAYLOAD_LEN] {
+        let mut response = *request;
+        response[0] = status;
+        response
+    }
+
+    #[test]
+    fn response_reader_polls_new_and_busy_without_resending_command() {
+        let request = battery_request();
+        let mut responses = std::collections::VecDeque::from([
+            response_for(&request, COMMAND_STATUS_NEW),
+            response_for(&request, COMMAND_STATUS_BUSY),
+            response_for(&request, COMMAND_STATUS_OK),
+        ]);
+        let mut reads = 0;
+        let mut pauses = Vec::new();
+        let reply = wait_for_command_reply(
+            &request,
+            || {
+                reads += 1;
+                Ok(responses.pop_front().expect("expected a queued HID response"))
+            },
+            |duration| pauses.push(duration),
+        )
+        .expect("pending responses should complete");
+        assert_eq!(reply[0], COMMAND_STATUS_OK);
+        assert_eq!(reads, 3, "one SET is followed by three GET_REPORT reads");
+        assert_eq!(pauses, [RESPONSE_POLL_WAIT, RESPONSE_POLL_WAIT]);
+    }
+
+    #[test]
+    fn response_reader_bounds_repeated_new_status() {
+        let request = battery_request();
+        let mut reads = 0;
+        let error = wait_for_command_reply(
+            &request,
+            || {
+                reads += 1;
+                Ok(response_for(&request, COMMAND_STATUS_NEW))
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!(reads, RESPONSE_POLL_ATTEMPTS);
+        assert!(error.contains("last response status 0x00"));
+    }
+
+    #[test]
+    fn response_reader_ignores_a_stale_reply_for_another_command() {
+        let request = battery_request();
+        let mut stale = response_for(&request, COMMAND_STATUS_OK);
+        stale[7] = 0x81;
+        let expected = response_for(&request, COMMAND_STATUS_OK);
+        let mut replies = [stale, expected].into_iter();
+        let reply = wait_for_command_reply(
+            &request,
+            || Ok(replies.next().expect("expected two HID responses")),
+            |_| {},
+        )
+        .expect("the matching reply should be selected");
+        assert_eq!(reply[7], CMD_GET_BATTERY);
+    }
+
+    #[test]
+    fn settings_keep_dpi_and_polling_when_battery_read_fails() {
+        let settings = collect_mouse_settings(
+            Err("battery query status 0x00".into()),
+            Ok(1600),
+            Ok(500),
+        );
+        assert_eq!(settings.battery_percent, None);
+        assert_eq!(settings.dpi, Some(1600));
+        assert_eq!(settings.poll_rate_hz, Some(500));
+        assert_eq!(settings.warnings.len(), 1);
+        assert!(settings.warnings[0].starts_with("Battery:"));
+    }
+
+    #[test]
+    fn settings_keep_battery_and_dpi_when_polling_read_fails() {
+        let settings = collect_mouse_settings(Ok(80), Ok(2400), Err("bad poll code".into()));
+        assert_eq!(settings.battery_percent, Some(80));
+        assert_eq!(settings.dpi, Some(2400));
+        assert_eq!(settings.poll_rate_hz, None);
+        assert_eq!(settings.warnings.len(), 1);
+        assert!(settings.warnings[0].starts_with("Polling rate:"));
     }
 
     #[test]

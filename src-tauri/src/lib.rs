@@ -2949,7 +2949,7 @@ async fn get_native_model() -> Result<device_catalog::NativeModelInfo, CommandEr
 async fn get_mouse_settings() -> Result<linux_onboard_backup::LinuxMouseSettings, CommandError> {
     tauri::async_runtime::spawn_blocking(|| {
         linux_onboard_backup::LinuxOnboardDevice::open()
-            .and_then(|device| device.settings())
+            .map(|device| device.settings())
             .map_err(|message| CommandError::new("onboard_device_unavailable", message, None))
     })
     .await
