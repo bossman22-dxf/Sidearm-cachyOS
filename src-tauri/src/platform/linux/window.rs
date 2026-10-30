@@ -318,19 +318,19 @@ pub(crate) fn capture_foreground_window() -> Result<RawWindowCapture, String> {
     // D-Bus property. The KWin script pushes changes into Sidearm's session
     // service, so return that cached native Wayland window directly.
     if is_kde_wayland() {
-        if let Some(cache) = KDE_WINDOW_CACHE.get() {
-            if let Some(capture) = cache.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-                return Ok(capture);
-            }
-        }
-        return Err("KWin Wayland focus monitor is not ready; check Sidearm's KWin script and session D-Bus connection.".into());
+        let capture = KDE_WINDOW_CACHE.get().and_then(|cache| {
+            cache.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        });
+        return capture.ok_or_else(|| {
+            "KWin Wayland focus monitor is not ready; check Sidearm's KWin script and session D-Bus connection.".into()
+        });
     }
 
     // GNOME Wayland uses its own focused-window extension.
-    if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        if let Some(capture) = try_gnome_dbus() {
-            return Ok(capture);
-        }
+    if std::env::var("WAYLAND_DISPLAY").is_ok()
+        && let Some(capture) = try_gnome_dbus()
+    {
+        return Ok(capture);
     }
 
     // Fallback to X11/XCB
@@ -421,14 +421,13 @@ pub(crate) fn is_current_process_elevated() -> bool {
 /// on any error -- the Tauri window manager will clip to screen regardless.
 pub(crate) fn is_foreground_fullscreen() -> bool {
     // Try GNOME Wayland D-Bus extension first
-    if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        if let Some(capture) = try_gnome_dbus_geometry() {
-            let (x, y, w, h) = capture;
-            if x != 0 || y != 0 {
-                return false;
-            }
-            return w >= 1024 && h >= 768;
+    if std::env::var("WAYLAND_DISPLAY").is_ok()
+        && let Some((x, y, w, h)) = try_gnome_dbus_geometry()
+    {
+        if x != 0 || y != 0 {
+            return false;
         }
+        return w >= 1024 && h >= 768;
     }
 
     // Fallback to X11/XCB

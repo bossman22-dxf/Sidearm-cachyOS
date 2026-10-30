@@ -20,6 +20,8 @@ use std::{
 const VID: u16 = 0x1532;
 const PID: u16 = 0x00b4;
 const INTERFACE: i32 = 0;
+const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
+const USAGE_MOUSE: u16 = 0x02;
 const REPORT_ID: u8 = 0x03;
 const PAYLOAD_LEN: usize = 90;
 const COMMAND_STATUS_OK: u8 = 0x02;
@@ -62,14 +64,45 @@ pub struct LinuxOnboardDevice {
     _exclusive: MutexGuard<'static, ()>,
 }
 
+fn is_target_hid_collection(interface_number: i32, usage_page: u16, usage: u16) -> bool {
+    interface_number == INTERFACE
+        && usage_page == USAGE_PAGE_GENERIC_DESKTOP
+        && usage == USAGE_MOUSE
+}
+
 impl LinuxOnboardDevice {
     pub fn open() -> Result<Self, String> {
         let exclusive = DEVICE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let api = HidApi::new().map_err(|e| format!("HID initialization failed: {e}"))?;
-        let info = api
+        let matching_devices: Vec<_> = api
             .device_list()
-            .find(|d| d.vendor_id() == VID && d.product_id() == PID && d.interface_number() == INTERFACE)
-            .ok_or_else(|| "Razer Naga V2 HyperSpeed vendor interface 0 was not found. Check the receiver connection and HID permissions.".to_string())?;
+            .filter(|d| d.vendor_id() == VID && d.product_id() == PID)
+            .collect();
+        // HIDAPI enumerates each top-level HID collection separately. This
+        // receiver exposes several collections on the same USB interface
+        // number, so matching only interface_number == 0 can open the
+        // keyboard/auxiliary collection instead of the mouse collection that
+        // carries the vendor feature reports.
+        let info = matching_devices
+            .iter()
+            .copied()
+            .find(|d| {
+                is_target_hid_collection(d.interface_number(), d.usage_page(), d.usage())
+            })
+            .ok_or_else(|| {
+                let found = matching_devices
+                    .iter()
+                    .map(|d| format!(
+                        "interface {} usage-page {:#06x} usage {:#06x}",
+                        d.interface_number(), d.usage_page(), d.usage()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "Razer Naga V2 HyperSpeed vendor mouse collection (USB interface 0, Generic Desktop/Mouse) was not found.                      Detected HID collections: {}. Check the receiver connection, HID permissions, and hidraw backend.",
+                    if found.is_empty() { "none".into() } else { found }
+                )
+            })?;
         let device = api
             .open_path(info.path())
             .map_err(|e| format!("Could not open the Naga vendor HID interface: {e}. Check the device's udev permissions; do not run Sidearm as root."))?;
@@ -489,18 +522,18 @@ pub fn apply_profile_mouse_settings(profile: &crate::config::Profile) {
                 if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
                     return Ok(());
                 }
-                if let Some(value) = dpi {
-                    if device.dpi()? != value {
-                        device.set_dpi_live(value)?;
-                    }
+                if let Some(value) = dpi
+                    && device.dpi()? != value
+                {
+                    device.set_dpi_live(value)?;
                 }
                 if PROFILE_SWITCHES.load(Ordering::SeqCst) != generation {
                     return Ok(());
                 }
-                if let Some(value) = poll_rate_hz {
-                    if device.poll_rate_hz()? != value {
-                        device.write_poll_rate_hz(value)?;
-                    }
+                if let Some(value) = poll_rate_hz
+                    && device.poll_rate_hz()? != value
+                {
+                    device.write_poll_rate_hz(value)?;
                 }
                 Ok(())
             });
@@ -612,7 +645,7 @@ mod tests {
     fn restore_validation_rejects_missing_or_duplicate_addresses() {
         let mut payload = complete_payload();
         payload.records.pop();
-        assert!(validate_restore_payload(&payload).unwrap_err().contains("complete expected"));
+        assert!(validate_restore_payload(&payload).unwrap_err().contains("incomplete"));
         let mut payload = complete_payload();
         payload.records[0] = payload.records[1].clone();
         assert!(validate_restore_payload(&payload).unwrap_err().contains("complete expected"));
@@ -628,6 +661,14 @@ mod tests {
         payload[8..11].copy_from_slice(&[1, 0x40, 0]);
         payload[88] = checksum(&payload);
         assert_eq!(payload[88], payload[2..88].iter().fold(0, |a, b| a ^ b));
+    }
+
+    #[test]
+    fn target_hid_collection_is_the_mouse_application_on_interface_zero() {
+        assert!(is_target_hid_collection(0, 0x01, 0x02));
+        assert!(!is_target_hid_collection(0, 0x01, 0x06));
+        assert!(!is_target_hid_collection(1, 0x01, 0x02));
+        assert!(!is_target_hid_collection(0, 0x0c, 0x01));
     }
 
     #[test]

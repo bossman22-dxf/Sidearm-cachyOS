@@ -279,6 +279,7 @@ pub struct Settings {
 }
 
 /// `Settings.offline_profile_id` value for "the profile in effect at exit".
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub const OFFLINE_PROFILE_ACTIVE: &str = "@active";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

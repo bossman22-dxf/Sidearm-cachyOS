@@ -1,12 +1,12 @@
-# src-tauri/src/bin — Standalone command-line utilities
+# sidearm-recover — Standalone command-line utility
 
 ## Purpose
 
-Small executables that must remain usable independently of the Tauri window, especially recovery when the main UI cannot start.
+A standalone executable that must remain usable independently of the Tauri window, especially recovery when the main UI cannot start.
 
 ## Ownership
 
-- `sidearm-recover.rs` — Linux onboard-memory backup, validation, explicitly confirmed raw-record restoration, and explicitly confirmed standard mapping.
+- `main.rs` — Linux onboard-memory backup, validation, explicitly confirmed raw-record restoration, and explicitly confirmed standard mapping.
 
 ## Local Contracts
 

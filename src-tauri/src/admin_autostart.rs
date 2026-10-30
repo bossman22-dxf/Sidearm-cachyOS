@@ -37,9 +37,12 @@
 //! Result: a single UAC prompt at toggle time and no console flashes (the
 //! elevated helper is Sidearm's own GUI-subsystem exe).
 
+#[cfg(any(target_os = "windows", test))]
 use std::path::Path;
+#[cfg(any(target_os = "windows", test))]
 use std::sync::LazyLock;
 
+#[cfg(target_os = "windows")]
 const TASK_NAME: &str = "SidearmAutostartAdmin";
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,6 +59,7 @@ pub struct AdminAutostartStatus {
 }
 
 /// What the registered task launches, as read back from its XML.
+#[cfg(any(target_os = "windows", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RegisteredTask {
     /// Created by this version: verifier script + pinned (file, SHA-256) list.
@@ -67,6 +71,7 @@ enum RegisteredTask {
     Legacy { path: String },
 }
 
+#[cfg(target_os = "windows")]
 impl RegisteredTask {
     fn path(&self) -> &str {
         match self {
@@ -117,8 +122,10 @@ pub fn query() -> AdminAutostartStatus {
 }
 
 /// Command-line flag that turns Sidearm.exe into the elevated helper.
+#[cfg(target_os = "windows")]
 pub const HELPER_ARG: &str = "--admin-autostart";
 /// Helper exit code for a failure that has no HRESULT (e.g. the `%` path).
+#[cfg(target_os = "windows")]
 const HELPER_EXIT_FAILED: i32 = 1;
 
 #[cfg(target_os = "windows")]
@@ -242,6 +249,7 @@ fn current_pin_manifest(exe: &Path) -> Result<Vec<(String, String)>, String> {
 
 /// Sorted (file name, SHA-256 upper-case hex) for the exe plus every `*.dll`
 /// (extension case-insensitive) directly in `dir`; subfolders are not walked.
+#[cfg(any(target_os = "windows", test))]
 fn build_pin_manifest(dir: &Path, exe_name: &str) -> Result<Vec<(String, String)>, String> {
     let mut names = vec![exe_name.to_owned()];
     let entries =
@@ -269,6 +277,7 @@ fn build_pin_manifest(dir: &Path, exe_name: &str) -> Result<Vec<(String, String)
 
 /// Streaming SHA-256 of a file as upper-case hex (the form PowerShell's
 /// `[BitConverter]::ToString(..).Replace('-','')` produces).
+#[cfg(any(target_os = "windows", test))]
 fn sha256_file_hex(path: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let mut file =
@@ -283,6 +292,7 @@ fn sha256_file_hex(path: &Path) -> Result<String, String> {
 }
 
 /// Split a Windows exe path into (folder with trailing `\`, file name).
+#[cfg(any(target_os = "windows", test))]
 fn split_exe_path(exe_path: &str) -> (&str, &str) {
     match exe_path.rfind('\\') {
         Some(idx) => exe_path.split_at(idx + 1),
@@ -291,6 +301,7 @@ fn split_exe_path(exe_path: &str) -> (&str, &str) {
 }
 
 /// PowerShell single-quoted literal (`'` doubled; `$`, backtick stay literal).
+#[cfg(any(target_os = "windows", test))]
 fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
@@ -299,6 +310,7 @@ fn ps_quote(s: &str) -> String {
 /// (Task Scheduler expands `%VAR%`) or `"` (it sits inside `-Command "..."`).
 /// The fixed prefix `$d='..';$e='..';$m=@{..};` is what `parse_registered_task`
 /// reads back. `start=false` prints `MATCH` instead of starting (tests).
+#[cfg(any(target_os = "windows", test))]
 fn verifier_script(exe_path: &str, manifest: &[(String, String)], start: bool) -> String {
     let (dir, exe) = split_exe_path(exe_path);
     let pins = manifest
@@ -330,6 +342,7 @@ fn verifier_script(exe_path: &str, manifest: &[(String, String)], start: bool) -
 }
 
 /// `powershell.exe` command line (after the program name) the task runs.
+#[cfg(any(target_os = "windows", test))]
 fn task_arguments(exe_path: &str, manifest: &[(String, String)], start: bool) -> String {
     format!(
         "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"{}\"",
@@ -345,6 +358,7 @@ fn task_arguments(exe_path: &str, manifest: &[(String, String)], start: bool) ->
 /// schema `version="1.2"`: Task Scheduler rejects the whole task otherwise
 /// (measured: `UseUnifiedSchedulingEngine`, a 1.6 element, failed every
 /// registration with 0x80041316 "unexpected node").
+#[cfg(any(target_os = "windows", test))]
 fn task_definition_xml(exe_path: &str, manifest: &[(String, String)]) -> String {
     let (dir, _) = split_exe_path(exe_path);
     let arguments = xml_escape(&task_arguments(exe_path, manifest, true));
@@ -392,6 +406,7 @@ fn task_definition_xml(exe_path: &str, manifest: &[(String, String)]) -> String 
     )
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -400,6 +415,7 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn xml_unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -409,6 +425,7 @@ fn xml_unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+#[cfg(target_os = "windows")]
 fn paths_equal(a: &Path, b: &Path) -> bool {
     if let (Ok(ca), Ok(cb)) = (a.canonicalize(), b.canonicalize()) {
         return ca == cb;
@@ -417,6 +434,7 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
 }
 
 /// Raw (still XML-escaped) text of the first `<tag>…</tag>` element.
+#[cfg(any(target_os = "windows", test))]
 fn element_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let start = xml.find(&open)? + open.len();
@@ -424,6 +442,7 @@ fn element_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     Some(&xml[start..start + end])
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn extract_command_from_xml(xml: &str) -> Option<String> {
     // schtasks-registered tasks (pre-v0.1.11) wrapped the path in quotes
     // inside the <Command> element to handle spaces; the COM API does not.
@@ -436,6 +455,7 @@ fn extract_command_from_xml(xml: &str) -> Option<String> {
 /// version) or a direct exe launch (older versions). An `<Arguments>` that is
 /// not our verifier falls back to the `<Command>` path, so the UI shows a path
 /// mismatch and offers to re-register.
+#[cfg(any(target_os = "windows", test))]
 fn parse_registered_task(xml: &str) -> Option<RegisteredTask> {
     static HEADER: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(

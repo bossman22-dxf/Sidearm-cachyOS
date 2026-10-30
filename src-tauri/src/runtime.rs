@@ -30,6 +30,7 @@ pub const EVENT_THROTTLE_BLOCKED: &str = "throttle_blocked";
 pub const EVENT_TRAY_PROFILE_CHANGED: &str = "tray_profile_changed";
 pub const EVENT_QUICK_RULE_START: &str = "quick_rule_start";
 pub const EVENT_QUICK_RULE_FAILED: &str = "quick_rule_failed";
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub const EVENT_MOUSE_DEFAULTS_SUSPECTED: &str = "mouse_defaults_suspected";
 pub const EVENT_ELEVATED_FOREGROUND: &str = "elevated_foreground_blocked";
 
@@ -157,6 +158,7 @@ impl RuntimeStore {
 
     /// The profile the runtime applied last: the manual override, else the one
     /// the last foreground resolution picked. `None` before any resolution.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub fn last_active_profile_id(&self) -> Option<&str> {
         self.manual_profile_override
             .as_deref()

@@ -15,21 +15,19 @@ use crate::config::OsdPosition;
 /// Falls back to 1.0 if neither is set or parseable.
 pub(crate) fn get_dpi_scale() -> f64 {
     // Try GTK scale first
-    if let Ok(val) = std::env::var("GDK_SCALE") {
-        if let Ok(scale) = val.trim().parse::<f64>() {
-            if scale > 0.0 {
-                return scale;
-            }
-        }
+    if let Ok(val) = std::env::var("GDK_SCALE")
+        && let Ok(scale) = val.trim().parse::<f64>()
+        && scale > 0.0
+    {
+        return scale;
     }
 
     // Try Qt scale factor
-    if let Ok(val) = std::env::var("QT_SCALE_FACTOR") {
-        if let Ok(scale) = val.trim().parse::<f64>() {
-            if scale > 0.0 {
-                return scale;
-            }
-        }
+    if let Ok(val) = std::env::var("QT_SCALE_FACTOR")
+        && let Ok(scale) = val.trim().parse::<f64>()
+        && scale > 0.0
+    {
+        return scale;
     }
 
     1.0
@@ -99,22 +97,20 @@ fn detect_screen_resolution() -> (i32, i32) {
 
             // Check if this connector is enabled/connected
             let status_path = dir.join("status");
-            if let Ok(status) = std::fs::read_to_string(&status_path) {
-                if status.trim() != "connected" {
-                    continue;
-                }
-            } else {
+            let Ok(status) = std::fs::read_to_string(&status_path) else {
+                continue;
+            };
+            if status.trim() != "connected" {
                 continue;
             }
 
             // Read the active mode from the modes file (first line is preferred)
             let modes_path = dir.join("modes");
-            if let Ok(modes) = std::fs::read_to_string(&modes_path) {
-                if let Some(first_mode) = modes.lines().next() {
-                    if let Some((w, h)) = parse_mode_string(first_mode.trim()) {
-                        return (w, h);
-                    }
-                }
+            if let Ok(modes) = std::fs::read_to_string(&modes_path)
+                && let Some(first_mode) = modes.lines().next()
+                && let Some((w, h)) = parse_mode_string(first_mode.trim())
+            {
+                return (w, h);
             }
         }
     }

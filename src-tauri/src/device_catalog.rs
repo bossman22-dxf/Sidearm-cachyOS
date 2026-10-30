@@ -6,6 +6,7 @@
 //! only. How a model is added and verified: `docs/ADDING-A-MODEL.md`.
 
 /// One natively supported mouse model.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #[derive(Debug)]
 pub struct NativeModel {
     pub name: &'static str,
@@ -42,6 +43,7 @@ pub struct NativeModel {
 /// A model's consumer-page signal path: each key button holds a record of
 /// category `0x0a` with a **reserved** consumer usage, which Windows ignores,
 /// and Sidearm reads the press straight from the HID collection.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #[derive(Debug)]
 pub struct ConsumerSignals {
     /// USB interface and top-level collection that carry the reports
@@ -56,26 +58,31 @@ pub struct ConsumerSignals {
 
 impl NativeModel {
     /// Consumer usage a key button sends on this model, if it has the path.
+    #[cfg(any(target_os = "windows", test))]
     pub fn consumer_usage_for(&self, control_id: &str) -> Option<u16> {
         self.consumer.as_ref()?.usages.iter().find(|(id, _)| *id == control_id).map(|(_, usage)| *usage)
     }
 
     /// Vendor button id of a control whose onboard record emits a key.
+    #[cfg(any(target_os = "windows", test))]
     pub fn button_id_for(&self, control_id: &str) -> Option<u8> {
         self.key_buttons.iter().find(|(id, _)| *id == control_id).map(|(_, button)| *button)
     }
 
     /// Vendor slot of a key button, when this model writes it through one.
+    #[cfg(any(target_os = "windows", test))]
     pub fn slot_for(&self, button_id: u8) -> Option<u8> {
         self.slots.iter().find(|(button, _)| *button == button_id).map(|(_, slot)| *slot)
     }
 
     /// Wire code of a poll rate the model supports.
+    #[cfg(any(target_os = "windows", test))]
     pub fn poll_code_for_hz(&self, hz: u16) -> Option<u8> {
         self.poll_rates.iter().find(|(rate, _)| *rate == hz).map(|(_, code)| *code)
     }
 
     /// Poll rate (Hz) of a wire code.
+    #[cfg(any(target_os = "windows", test))]
     pub fn hz_for_poll_code(&self, code: u8) -> Option<u16> {
         self.poll_rates.iter().find(|(_, c)| *c == code).map(|(rate, _)| *rate)
     }
@@ -180,6 +187,7 @@ pub const NAGA_V2_HYPERSPEED: NativeModel = NativeModel {
 // How a model moves to `verified`: docs/ADDING-A-MODEL.md.
 
 /// The twelve side buttons `0x40..=0x4b`, shared by every 12-button Naga.
+#[cfg(any(target_os = "windows", test))]
 const THUMBS: [(&str, u8); 12] = [
     ("thumb_01", 0x40), ("thumb_02", 0x41), ("thumb_03", 0x42), ("thumb_04", 0x43),
     ("thumb_05", 0x44), ("thumb_06", 0x45), ("thumb_07", 0x46), ("thumb_08", 0x47),
@@ -188,6 +196,7 @@ const THUMBS: [(&str, u8); 12] = [
 
 /// Razer Naga V2 Pro (cable `00A7`, HyperSpeed dongle `00A8`). Its 6-button
 /// plate (`0x50..=0x55`) has no control ids yet.
+#[cfg(any(target_os = "windows", test))]
 pub const NAGA_V2_PRO: NativeModel = NativeModel {
     name: "Razer Naga V2 Pro",
     vid: 0x1532,
@@ -219,6 +228,7 @@ pub const NAGA_V2_PRO: NativeModel = NativeModel {
 
 /// Razer Naga Pro (cable `008F`, dongle `0090`). Swappable side plates; which
 /// plate answers on which ids is unknown.
+#[cfg(any(target_os = "windows", test))]
 pub const NAGA_PRO: NativeModel = NativeModel {
     name: "Razer Naga Pro",
     vid: 0x1532,
@@ -248,6 +258,7 @@ pub const NAGA_PRO: NativeModel = NativeModel {
 };
 
 /// Razer Naga X (wired only, `0096`): no mouse 4/5, no tilt, no top buttons.
+#[cfg(any(target_os = "windows", test))]
 pub const NAGA_X: NativeModel = NativeModel {
     name: "Razer Naga X",
     vid: 0x1532,
@@ -271,6 +282,7 @@ pub const NAGA_X: NativeModel = NativeModel {
 };
 
 /// Every natively supported model, probed in this order.
+#[cfg(any(target_os = "windows", test))]
 pub static CATALOG: &[&NativeModel] = &[&NAGA_V2_HYPERSPEED, &NAGA_V2_PRO, &NAGA_PRO, &NAGA_X];
 
 #[cfg(test)]
