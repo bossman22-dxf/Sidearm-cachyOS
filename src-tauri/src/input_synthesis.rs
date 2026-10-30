@@ -2596,6 +2596,19 @@ fn get_virtual_mouse() -> Result<&'static std::sync::Mutex<evdev::uinput::Virtua
 }
 
 #[cfg(target_os = "linux")]
+fn linux_auxiliary_mouse_button(
+    action: crate::config::MouseActionKind,
+) -> Option<evdev::KeyCode> {
+    use crate::config::MouseActionKind;
+    match action {
+        // BTN_SIDE and BTN_EXTRA are Linux's standard Back and Forward buttons.
+        MouseActionKind::MouseBack => Some(evdev::KeyCode::BTN_SIDE),
+        MouseActionKind::MouseForward => Some(evdev::KeyCode::BTN_EXTRA),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn send_mouse_event(action: crate::config::MouseActionKind) -> Result<(), String> {
     use crate::config::MouseActionKind;
     use evdev::{EventType, InputEvent, KeyCode, RelativeAxisCode};
@@ -2658,13 +2671,11 @@ fn send_mouse_event(action: crate::config::MouseActionKind) -> Result<(), String
                 1,
             )])?;
         }
-        MouseActionKind::MouseBack => {
-            emit(&[InputEvent::new(EventType::KEY.0, KeyCode::BTN_SIDE.0, 1)])?;
-            emit(&[InputEvent::new(EventType::KEY.0, KeyCode::BTN_SIDE.0, 0)])?;
-        }
-        MouseActionKind::MouseForward => {
-            emit(&[InputEvent::new(EventType::KEY.0, KeyCode::BTN_EXTRA.0, 1)])?;
-            emit(&[InputEvent::new(EventType::KEY.0, KeyCode::BTN_EXTRA.0, 0)])?;
+        MouseActionKind::MouseBack | MouseActionKind::MouseForward => {
+            let code = linux_auxiliary_mouse_button(action)
+                .ok_or_else(|| "Unsupported auxiliary mouse button action".to_string())?;
+            emit(&[InputEvent::new(EventType::KEY.0, code.0, 1)])?;
+            emit(&[InputEvent::new(EventType::KEY.0, code.0, 0)])?;
         }
     }
 
@@ -2679,6 +2690,20 @@ fn send_mouse_event(_action: crate::config::MouseActionKind) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn back_and_forward_actions_use_mouse_buttons_four_and_five() {
+        use crate::config::MouseActionKind;
+        assert_eq!(
+            linux_auxiliary_mouse_button(MouseActionKind::MouseBack).map(|code| code.0),
+            Some(0x113), // BTN_SIDE
+        );
+        assert_eq!(
+            linux_auxiliary_mouse_button(MouseActionKind::MouseForward).map(|code| code.0),
+            Some(0x114), // BTN_EXTRA
+        );
+    }
 
     #[test]
     fn expand_tokens_replaces_date_and_clipboard() {
