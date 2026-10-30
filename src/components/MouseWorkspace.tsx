@@ -200,6 +200,13 @@ export function MouseWorkspace({
         const key = STATE_MESSAGE[kind];
         return key ? [<Notice key={kind} variant="warning"><p>{t(key)}</p></Notice>] : [];
       })}
+      {model ? (
+        <section className="settings-section">
+          <SettingRow title={t("mouse.deviceStatus")}>
+            <span>{model.name} — {t(model.connected ? "mouse.connected" : "mouse.disconnected")}</span>
+          </SettingRow>
+        </section>
+      ) : null}
       {model && !model.verified ? (
         <Notice variant="warning">
           <p>{t("mouse.unverifiedModel", { name: model.name })}</p>
@@ -251,11 +258,11 @@ export function MouseWorkspace({
                 checked={overrides}
                 // Seeded from the mouse's live values: without them it would
                 // save made-up defaults.
-                disabled={!overrides && device === null}
+                disabled={!overrides && device?.dpi == null && device?.pollRateHz == null}
                 onChange={(checked) =>
                   saveProfile(
                     checked
-                      ? { mouseDpi: device?.dpi, mousePollRateHz: device?.pollRateHz }
+                      ? { mouseDpi: device?.dpi ?? undefined, mousePollRateHz: device?.pollRateHz ?? undefined }
                       : { mouseDpi: undefined, mousePollRateHz: undefined },
                   )
                 }
@@ -267,8 +274,12 @@ export function MouseWorkspace({
             {overrides
               ? t("mouse.profileHelpOn")
               : device === null
-                ? t("mouse.profileNeedsMouse")
-                : t("mouse.profileHelpOff")}
+                ? model?.connected
+                  ? t("mouse.profileNeedsSettings")
+                  : t("mouse.profileNeedsMouse")
+                : device.dpi == null && device.pollRateHz == null
+                  ? t("mouse.profileNeedsSettings")
+                  : t("mouse.profileHelpOff")}
           </p>
 
           {overrides ? (
@@ -405,8 +416,10 @@ export function MouseWorkspace({
         </SettingRow>
         ) : null}
         <SettingRow title={t("mouse.batteryHeader")} hint={t("mouse.batteryHelp")}>
-          {device ? (
+          {device?.batteryPercent != null ? (
             <strong>{t("mouse.batteryValue", { percent: device.batteryPercent })}</strong>
+          ) : device ? (
+            <span>{t("mouse.batteryUnavailable")}</span>
           ) : null}
         </SettingRow>
         <SettingRow title={t("mouse.batteryInTray")} sub>
@@ -421,6 +434,16 @@ export function MouseWorkspace({
             ariaLabel={t("mouse.batteryInTray")}
           />
         </SettingRow>
+        {device?.warnings && device.warnings.length > 0 ? (
+          <Notice variant="warning" className="mt-12">
+            <p>{t("mouse.settingsPartial")}</p>
+            <ul>
+              {device.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </Notice>
+        ) : null}
         {error ? (
           <Notice variant="warning" className="mt-12">
             <p>{t("mouse.unavailable")}</p>
