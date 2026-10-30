@@ -222,8 +222,8 @@
     "scrollDown": "Scroll down",
     "scrollLeft": "Scroll left",
     "scrollRight": "Scroll right",
-    "mouseBack": "Back",
-    "mouseForward": "Forward"
+    "mouseBack": "Mouse 4 (Back)",
+    "mouseForward": "Mouse 5 (Forward)"
   },
   "mediaKey": {
     "playPause": "Play / Pause",
@@ -1292,6 +1292,12 @@
   "mouse": {
     "profilePicker": "Profile",
     "profilePickerHelp": "Pick a profile to set the mouse up for it. “● now” marks the profile Sidearm applies right now.",
+    "deviceStatus": "Device",
+    "connected": "Connected",
+    "disconnected": "Not connected",
+    "settingsPartial": "The mouse is connected, but some settings could not be read:",
+    "batteryUnavailable": "Unavailable",
+    "profileNeedsSettings": "The mouse is detected, but Sidearm could not read its DPI or polling rate. Refresh the settings before enabling profile-specific values.",
     "backupHeader": "Onboard memory backup",
     "backupHelp": "Save a read-only copy of the mouse's original button records before changing onboard mappings. The mouse is not modified.",
     "backupButton": "Create backup",
