@@ -504,7 +504,7 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 }
 
 fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
-    let mut records = Vec::with_capacity(28);
+    let mut records = Vec::with_capacity(32);
     for index in 0..12u8 {
         let button_id = 0x40 + index;
         let usage = 0x68 + index;
@@ -524,6 +524,27 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
             records.push(record);
         }
     }
+    // The top panel buttons are keyboard controls, not mouse-button events.
+    // Sidearm's encoder map identifies them as Alt+F23 and Alt+F24. Their
+    // records have no vendor slot, but the command-class write path addresses
+    // them directly. Write both layers so stale firmware actions cannot leak
+    // through while Sidearm is running.
+    for (button_id, usage) in [(0x0b, 0x72), (0x0c, 0x73)] {
+        for layer in 0..=1 {
+            let mut record = payload
+                .records
+                .iter()
+                .find(|record| record.button_id == button_id && record.layer == layer)
+                .cloned()
+                .ok_or_else(|| format!("backup is missing top button {button_id:#04x} layer {layer}"))?;
+            record.bytes[3] = 0x02;
+            record.bytes[4] = 0x02;
+            record.bytes[5] = 0x40; // right Alt, as confirmed by the device's key-record format
+            record.bytes[6] = usage;
+            records.push(record);
+        }
+    }
+
     for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
         for layer in 0..=1 {
             let mut record = payload
@@ -704,11 +725,20 @@ mod tests {
             record.bytes[9] = 0xbb;
         }
         let records = sidearm_mapping_records(&payload).unwrap();
-        assert_eq!(records.len(), 28);
+        assert_eq!(records.len(), 32);
         assert_eq!(&records[0].bytes[3..7], &[2, 2, 0, 0x68]);
         assert_eq!(&records[23].bytes[3..7], &[2, 2, 0, 0x73]);
-        assert_eq!(&records[24].bytes[3..6], &[1, 1, 4]);
-        assert_eq!(&records[27].bytes[3..6], &[1, 1, 5]);
+        // D+ and D− are top-panel key buttons: Alt+F23 and Alt+F24.
+        assert_eq!(records[24].button_id, 0x0b);
+        assert_eq!(&records[24].bytes[3..7], &[2, 2, 0x40, 0x72]);
+        assert_eq!(records[26].button_id, 0x0c);
+        assert_eq!(&records[26].bytes[3..7], &[2, 2, 0x40, 0x73]);
+        // Both layers receive the same physical signals.
+        assert_eq!(&records[25].bytes[3..7], &[2, 2, 0x40, 0x72]);
+        assert_eq!(&records[27].bytes[3..7], &[2, 2, 0x40, 0x73]);
+        // Wheel-tilt M4/M5 remain distinct native mouse-button outputs.
+        assert_eq!(&records[28].bytes[3..6], &[1, 1, 4]);
+        assert_eq!(&records[31].bytes[3..6], &[1, 1, 5]);
         for record in &records {
             let original = payload.records.iter().find(|item| item.button_id == record.button_id && item.layer == record.layer).unwrap();
             assert_eq!(&record.bytes[7..10], &original.bytes[7..10]);
