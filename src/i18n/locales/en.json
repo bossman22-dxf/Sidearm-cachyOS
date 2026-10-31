@@ -1306,7 +1306,7 @@
     "backupIncomplete": "The backup file was saved, but some mouse records or the device mode could not be read. No mapping changes were made.",
     "mappingButton": "Back up and set up Naga buttons",
     "mappingTitle": "Change the Naga's onboard buttons?",
-    "mappingConfirm": "Experimental Linux mapping: this branch has not yet been validated on the physical mouse. Sidearm will save a complete backup, switch the mouse to normal onboard mode, set the 12 thumb buttons to F13–F24, set top auxiliary button 1 to Mouse Button 4 (Back) and top auxiliary button 2 to Mouse Button 5 (Forward), on both layers, and leave the other records unchanged. If a write fails, it will attempt to restore the backup. Continue only if you are prepared to test and recover the mouse.",
+    "mappingConfirm": "Experimental Linux mapping: this branch has not yet been validated on the physical mouse. Sidearm will save a complete backup, switch the mouse to normal onboard mode, and change only the two top auxiliary buttons: button 1 to Mouse Button 4 (Back) and button 2 to Mouse Button 5 (Forward), on both layers. All 12 thumb-button records and all wheel-tilt records will remain unchanged. If a write fails, it will attempt to restore the backup. Continue only if you are prepared to test and recover the mouse.",
     "mappingApplied": "Sidearm mapping applied. The 12 thumb buttons were set to F13–F24, D+/D− to Alt+F23/Alt+F24, and wheel-tilt M4/M5 remain mouse buttons 4/5.",
     "profileActiveNow": "{{name}} ● now",
     "batteryHeader": "Mouse battery",
