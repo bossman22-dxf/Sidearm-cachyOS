@@ -1143,7 +1143,7 @@ describe("createAppMappingFromCapture", () => {
     expect(result.appMappings[0]!.exe).toBe("chrome.exe");
     expect(result.appMappings[0]!.profileId).toBe("prof-1");
     expect(result.appMappings[0]!.priority).toBe(10);
-    expect(result.appMappings[0]!.enabled).toBe(true);
+    expect(result.appMappings[0]!.enabled).toBe(false);
     expect(result.appMappings[0]!.titleIncludes).toBeUndefined();
     expect(newMappingId).toBe(result.appMappings[0]!.id);
   });

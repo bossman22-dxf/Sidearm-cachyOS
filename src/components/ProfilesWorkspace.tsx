@@ -515,7 +515,7 @@ export function ProfilesWorkspace({
           processPath: cap.processPath || undefined,
           titleIncludes: cap.title ? [cap.title] : undefined,
           profileId: activeProfile.id,
-          enabled: true,
+          enabled: false,
           priority: activeProfile.priority,
         },
     );
@@ -568,7 +568,7 @@ export function ProfilesWorkspace({
       processPath: undefined,
       titleIncludes: undefined,
       profileId: activeProfile.id,
-      enabled: true,
+      enabled: false,
       priority: activeProfile.priority,
     });
   }

@@ -62,6 +62,7 @@ const KEY_REPEAT: i32 = 2;
 pub(super) struct CaptureBackendHandle {
     stop_flag: Arc<AtomicBool>,
     capture_thread: Option<JoinHandle<()>>,
+    pointer_thread: Option<JoinHandle<()>>,
     watcher_thread: Option<JoinHandle<()>>,
     worker_thread: Option<JoinHandle<()>>,
 }
@@ -228,6 +229,15 @@ impl CaptureBackendHandle {
             run_evdev_capture_loop(capture_stop, capture_tx);
         });
 
+        // --- Pointer collection thread: mirror normal mouse input and translate
+        // Naga wheel-tilt buttons to the existing Mouse 4/5 action bindings.
+        let pointer_stop = stop_flag.clone();
+        let pointer_tx = event_tx.clone();
+        let pointer_config = config.clone();
+        let pointer_thread = thread::spawn(move || {
+            super::linux_pointer::run_capture_loop(pointer_stop, pointer_tx, pointer_config);
+        });
+
         // --- Foreground watcher thread: polls active window every ~300ms ---
         let watcher_stop = stop_flag.clone();
         let watcher_app = app.clone();
@@ -247,6 +257,7 @@ impl CaptureBackendHandle {
         Ok(Self {
             stop_flag,
             capture_thread: Some(capture_thread),
+            pointer_thread: Some(pointer_thread),
             watcher_thread: Some(watcher_thread),
             worker_thread: Some(worker_thread),
         })
@@ -258,10 +269,13 @@ impl CaptureBackendHandle {
         if let Some(thread) = self.capture_thread.take() {
             let _ = thread.join();
         }
+        if let Some(thread) = self.pointer_thread.take() {
+            let _ = thread.join();
+        }
         if let Some(thread) = self.watcher_thread.take() {
             let _ = thread.join();
         }
-        // Worker thread exits when the channel sender is dropped (capture_thread ends).
+        // Worker exits once both keyboard and pointer capture threads release their senders.
         if let Some(thread) = self.worker_thread.take() {
             let _ = thread.join();
         }
