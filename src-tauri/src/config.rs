@@ -276,6 +276,10 @@ pub struct Settings {
     /// in effect at that moment (whichever window happened to be focused).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_profile_id: Option<String>,
+    /// One-time upgrade marker: built-in application/profile rules shipped enabled
+    /// in older defaults. Once applied, users may freely re-enable them.
+    #[serde(default)]
+    pub builtin_app_rules_defaults_applied: bool,
 }
 
 /// `Settings.offline_profile_id` value for "the profile in effect at exit".
@@ -953,6 +957,40 @@ fn migrate_devices(config: &mut AppConfig) {
     }
 }
 
+/// Built-in application rules shipped by Sidearm's original default config.
+/// Custom/user-created mappings deliberately do not appear here.
+const BUILTIN_APP_MAPPING_IDS: [&str; 10] = [
+    "app-code",
+    "app-cursor",
+    "app-chrome",
+    "app-msedge",
+    "app-firefox",
+    "app-windowsterminal",
+    "app-pwsh",
+    "app-cmd",
+    "app-telegram",
+    "app-notepadpp",
+];
+
+/// One-time migration for existing installs. Fresh configs already carry the
+/// marker; older saved configs are updated in memory before any rule resolves.
+/// Only Sidearm's preloaded rule IDs are disabled; user-created rules remain
+/// exactly as configured. The marker prevents overriding a user's later choice
+/// to explicitly re-enable a built-in rule.
+fn migrate_builtin_app_rules(config: &mut AppConfig) {
+    if config.settings.builtin_app_rules_defaults_applied {
+        return;
+    }
+
+    for mapping in &mut config.app_mappings {
+        if BUILTIN_APP_MAPPING_IDS.contains(&mapping.id.as_str()) {
+            mapping.enabled = false;
+        }
+    }
+
+    config.settings.builtin_app_rules_defaults_applied = true;
+}
+
 /// Migrate legacy clipboardPaste to sendText (avoids COM/OLE crashes).
 fn migrate_paste_mode(config: &mut AppConfig) {
     for action in &mut config.actions {
@@ -1071,6 +1109,7 @@ fn load_and_validate(
 ) -> Result<(AppConfig, Vec<ValidationWarning>), ConfigStoreError> {
     let mut config = read_config_from_path(config_path)?;
     migrate_devices(&mut config);
+    migrate_builtin_app_rules(&mut config);
     migrate_paste_mode(&mut config);
     let warnings = validate_config(&config)?;
     config.compile_title_regexes();
@@ -1207,6 +1246,7 @@ fn read_config_from_path(config_path: &Path) -> Result<AppConfig, ConfigStoreErr
 pub fn read_and_migrate_config_file(config_path: &Path) -> Result<AppConfig, ConfigStoreError> {
     let mut config = read_config_from_path(config_path)?;
     migrate_devices(&mut config);
+    migrate_builtin_app_rules(&mut config);
     migrate_paste_mode(&mut config);
     config.compile_title_regexes();
     Ok(config)
@@ -1960,6 +2000,7 @@ pub(crate) fn default_seed_config() -> AppConfig {
             hypershift_trigger: default_hypershift_trigger(),
             show_battery_in_tray: false,
             offline_profile_id: None,
+            builtin_app_rules_defaults_applied: true,
         },
         profiles: seed_profiles(),
         devices: vec![builtin_naga_device()],
@@ -3383,6 +3424,52 @@ mod tests {
         assert_eq!(config.profiles.len(), 7);
         assert_eq!(config.physical_controls.len(), NAGA_CONTROL_IDS.len());
         assert!(config.app_mappings.iter().all(|mapping| !mapping.enabled));
+        assert!(config.settings.builtin_app_rules_defaults_applied);
+    }
+
+    #[test]
+    fn migrate_builtin_app_rules_disables_only_seeded_rules_once() {
+        let mut config = default_seed_config();
+        config.settings.builtin_app_rules_defaults_applied = false;
+        for mapping in &mut config.app_mappings {
+            mapping.enabled = true;
+        }
+
+        let mut custom = app_mapping("custom-firefox", "my-firefox.exe", "browser", 20);
+        custom.enabled = true;
+        config.app_mappings.push(custom);
+
+        migrate_builtin_app_rules(&mut config);
+
+        assert!(config.settings.builtin_app_rules_defaults_applied);
+        assert!(
+            config.app_mappings.iter()
+                .filter(|mapping| BUILTIN_APP_MAPPING_IDS.contains(&mapping.id.as_str()))
+                .all(|mapping| !mapping.enabled),
+            "all preloaded Sidearm app rules must be disabled"
+        );
+        assert!(
+            config.app_mappings.iter()
+                .find(|mapping| mapping.id == "custom-firefox")
+                .expect("custom mapping retained")
+                .enabled,
+            "user-created app rules must remain unchanged"
+        );
+
+        // Once the migration marker is stored, the user's later decision to
+        // re-enable a built-in rule must survive subsequent loads.
+        config.app_mappings.iter_mut()
+            .find(|mapping| mapping.id == "app-firefox")
+            .expect("built-in Firefox rule")
+            .enabled = true;
+        migrate_builtin_app_rules(&mut config);
+        assert!(
+            config.app_mappings.iter()
+                .find(|mapping| mapping.id == "app-firefox")
+                .expect("built-in Firefox rule")
+                .enabled,
+            "migration must never override the user's subsequent choice"
+        );
     }
 
     #[test]
