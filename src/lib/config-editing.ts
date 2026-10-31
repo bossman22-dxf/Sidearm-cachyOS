@@ -751,7 +751,7 @@ export function createAppMappingFromCapture(
     exe,
     processPath,
     profileId,
-    enabled: true,
+    enabled: false,
     priority,
     titleIncludes:
       includeTitleFilter && title.trim() ? [title.trim()] : undefined,
