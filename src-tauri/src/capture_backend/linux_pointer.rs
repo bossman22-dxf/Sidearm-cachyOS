@@ -18,7 +18,7 @@ use std::{
 };
 
 use evdev::{
-    AttributeSet, EventType, InputEvent, KeyCode, MiscCode, PropType, RelativeAxisCode,
+    AttributeSet, InputEvent, KeyCode, MiscCode, PropType, RelativeAxisCode, SwitchCode,
     uinput::VirtualDevice,
 };
 
@@ -77,6 +77,7 @@ fn create_pointer_mirror(source: &evdev::Device) -> Result<VirtualDevice, String
     let mut builder = VirtualDevice::builder()
         .map_err(|e| format!("Could not create Naga pointer mirror: {e}"))?
         .name("Sidearm Naga Pointer")
+        .input_id(source.input_id())
         .with_keys(&keys)
         .map_err(|e| format!("Could not copy Naga pointer buttons: {e}"))?
         .with_relative_axes(&axes)
@@ -84,7 +85,14 @@ fn create_pointer_mirror(source: &evdev::Device) -> Result<VirtualDevice, String
         .with_properties(&properties)
         .map_err(|e| format!("Could not copy Naga pointer properties: {e}"))?;
 
-    if let Some(source_misc) = source.supported_misc() {
+    if let Some(source_switches) = source.supported_switches() {
+        let switches: AttributeSet<SwitchCode> = source_switches.iter().collect();
+        builder = builder
+            .with_switches(&switches)
+            .map_err(|e| format!("Could not copy Naga pointer switches: {e}"))?;
+    }
+
+    if let Some(source_misc) = source.misc_properties() {
         let misc: AttributeSet<MiscCode> = source_misc.iter().collect();
         builder = builder
             .with_msc(&misc)
