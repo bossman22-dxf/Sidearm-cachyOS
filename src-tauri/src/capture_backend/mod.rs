@@ -54,6 +54,8 @@ pub use windows::capture_helper_main;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod linux_pointer;
+#[cfg(target_os = "linux")]
 use linux::CaptureBackendHandle;
 
 #[cfg(target_os = "linux")]
