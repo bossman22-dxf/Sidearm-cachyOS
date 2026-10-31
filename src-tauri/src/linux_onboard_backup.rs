@@ -14,7 +14,7 @@ use std::{
     path::Path,
     sync::{atomic::{AtomicU64, Ordering}, Mutex, MutexGuard},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const VID: u16 = 0x1532;
@@ -95,11 +95,27 @@ where
 {
     let class = request[6];
     let command = request[7];
+    let started_at = Instant::now();
     let mut last_status = None;
+    // Preserve every short response header on timeout. This is deliberately
+    // read-only diagnostic data: it helps distinguish stale replies, pending
+    // commands, and a report-layout mismatch without exposing button payloads.
+    let mut response_headers = Vec::with_capacity(RESPONSE_POLL_ATTEMPTS);
 
     for attempt in 0..RESPONSE_POLL_ATTEMPTS {
         let reply = read_reply()?;
         last_status = Some(reply[0]);
+        let header = reply[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        response_headers.push(format!(
+            "{}:{}ms:[{}]",
+            attempt + 1,
+            started_at.elapsed().as_millis(),
+            header
+        ));
 
         if reply_matches(request, &reply) {
             match reply[0] {
@@ -129,7 +145,9 @@ where
         .map(|status| format!("; last response status {status:#04x}"))
         .unwrap_or_default();
     Err(format!(
-        "HID query {class:#04x}/{command:#04x} did not receive a completed matching reply after {RESPONSE_POLL_ATTEMPTS} response reads{last}"
+        "HID query {class:#04x}/{command:#04x} did not receive a completed matching reply after {RESPONSE_POLL_ATTEMPTS} response reads{last}; elapsed {}ms; response headers (poll:elapsed:[bytes 0..7]) [{}]",
+        started_at.elapsed().as_millis(),
+        response_headers.join("; ")
     ))
 }
 
