@@ -576,12 +576,11 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
             records.push(record);
         }
     }
-    // The top panel buttons are keyboard controls, not mouse-button events.
-    // Sidearm's encoder map identifies them as Alt+F23 and Alt+F24. Their
-    // records have no vendor slot, but the command-class write path addresses
-    // them directly. Write both layers so stale firmware actions cannot leak
-    // through while Sidearm is running.
-    for (button_id, usage) in [(0x0b, 0x72), (0x0c, 0x73)] {
+    // The two top auxiliary controls are Back and Forward, exposed as
+    // standard mouse buttons 4 and 5. They have no vendor slot, but the
+    // per-button command can write their onboard records directly. Set both
+    // layers so Hypershift cannot expose stale DPI-stage actions.
+    for (button_id, mouse_button) in [(0x0b, 4), (0x0c, 5)] {
         for layer in 0..=1 {
             let mut record = payload
                 .records
@@ -589,10 +588,9 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
                 .find(|record| record.button_id == button_id && record.layer == layer)
                 .cloned()
                 .ok_or_else(|| format!("backup is missing top button {button_id:#04x} layer {layer}"))?;
-            record.bytes[3] = 0x02;
-            record.bytes[4] = 0x02;
-            record.bytes[5] = 0x40; // right Alt, as confirmed by the device's key-record format
-            record.bytes[6] = usage;
+            record.bytes[3] = 0x01; // plain mouse-button category
+            record.bytes[4] = 0x01; // one-byte mouse-button value
+            record.bytes[5] = mouse_button;
             records.push(record);
         }
     }
@@ -769,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn sidearm_mapping_targets_f13_to_f24_and_preserves_real_mouse_buttons() {
+    fn sidearm_mapping_sets_top_aux_buttons_to_back_and_forward() {
         let mut payload = complete_payload();
         for (index, record) in payload.records.iter_mut().enumerate() {
             record.bytes[7] = index as u8;
@@ -780,15 +778,15 @@ mod tests {
         assert_eq!(records.len(), 32);
         assert_eq!(&records[0].bytes[3..7], &[2, 2, 0, 0x68]);
         assert_eq!(&records[23].bytes[3..7], &[2, 2, 0, 0x73]);
-        // D+ and D− are top-panel key buttons: Alt+F23 and Alt+F24.
+        // Top auxiliary 1 is Mouse Button 4 (Back), on both layers.
         assert_eq!(records[24].button_id, 0x0b);
-        assert_eq!(&records[24].bytes[3..7], &[2, 2, 0x40, 0x72]);
+        assert_eq!(&records[24].bytes[3..7], &[1, 1, 4, 0]);
+        assert_eq!(&records[25].bytes[3..7], &[1, 1, 4, 0]);
+        // Top auxiliary 2 is Mouse Button 5 (Forward), on both layers.
         assert_eq!(records[26].button_id, 0x0c);
-        assert_eq!(&records[26].bytes[3..7], &[2, 2, 0x40, 0x73]);
-        // Both layers receive the same physical signals.
-        assert_eq!(&records[25].bytes[3..7], &[2, 2, 0x40, 0x72]);
-        assert_eq!(&records[27].bytes[3..7], &[2, 2, 0x40, 0x73]);
-        // Wheel-tilt M4/M5 remain distinct native mouse-button outputs.
+        assert_eq!(&records[26].bytes[3..7], &[1, 1, 5, 0]);
+        assert_eq!(&records[27].bytes[3..7], &[1, 1, 5, 0]);
+        // Wheel-tilt records remain unchanged by this top-button mapping.
         assert_eq!(&records[28].bytes[3..6], &[1, 1, 4]);
         assert_eq!(&records[31].bytes[3..6], &[1, 1, 5]);
         for record in &records {
