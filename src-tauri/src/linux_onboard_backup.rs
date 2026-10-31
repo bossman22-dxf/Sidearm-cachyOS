@@ -61,6 +61,7 @@ pub struct LinuxMouseSettings {
 
 pub struct LinuxOnboardDevice {
     device: HidDevice,
+    report_id: u8,
     _exclusive: MutexGuard<'static, ()>,
 }
 
@@ -231,10 +232,24 @@ impl LinuxOnboardDevice {
                 failures.push(format!("{description}: blocking mode failed: {error}"));
                 continue;
             }
-            let candidate = Self { device, _exclusive: exclusive };
-            match candidate.command(CLASS_CONTROL, CMD_GET_MODE, &[0x00, 0x00]) {
-                Ok(_) => return Ok(candidate),
-                Err(error) => failures.push(format!("{description}: vendor probe failed: {error}")),
+            let mut candidate = Self {
+                device,
+                report_id: REPORT_ID,
+                _exclusive: exclusive,
+            };
+
+            // The Windows HID API uses report ID 0x03 for this model. On Linux,
+            // hidraw exposes the descriptor's numbered/unnumbered report layout
+            // directly; try the unnumbered form as a read-only compatibility
+            // fallback in case the receiver's Linux HID descriptor expects ID 0.
+            for report_id in [REPORT_ID, 0x00] {
+                candidate.report_id = report_id;
+                match candidate.command(CLASS_CONTROL, CMD_GET_MODE, &[0x00, 0x00]) {
+                    Ok(_) => return Ok(candidate),
+                    Err(error) => failures.push(format!(
+                        "{description} report-id {report_id:#04x}: {error}"
+                    )),
+                }
             }
         }
 
@@ -257,7 +272,7 @@ impl LinuxOnboardDevice {
         request[88] = checksum(&request);
 
         let mut output = [0u8; PAYLOAD_LEN + 1];
-        output[0] = REPORT_ID;
+        output[0] = self.report_id;
         output[1..].copy_from_slice(&request);
         self.device
             .send_feature_report(&output)
@@ -273,7 +288,7 @@ impl LinuxOnboardDevice {
 
     fn read_command_reply(&self, class: u8, command: u8) -> Result<[u8; PAYLOAD_LEN], String> {
         let mut input = [0u8; PAYLOAD_LEN + 1];
-        input[0] = REPORT_ID;
+        input[0] = self.report_id;
         let bytes_read = self.device
             .get_feature_report(&mut input)
             .map_err(|e| format!("Could not read HID reply {class:#04x}/{command:#04x}: {e}"))?;
