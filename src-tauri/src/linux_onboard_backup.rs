@@ -66,10 +66,8 @@ pub struct LinuxOnboardDevice {
     _exclusive: MutexGuard<'static, ()>,
 }
 
-fn is_target_hid_collection(interface_number: i32, usage_page: u16, usage: u16) -> bool {
+fn is_target_hid_interface(interface_number: i32) -> bool {
     interface_number == INTERFACE
-        && usage_page == USAGE_PAGE_GENERIC_DESKTOP
-        && usage == USAGE_MOUSE
 }
 
 /// A matching feature report can still be pending: 0x00 is "new command"
@@ -185,44 +183,67 @@ fn collect_mouse_settings(
 
 impl LinuxOnboardDevice {
     pub fn open() -> Result<Self, String> {
-        let exclusive = DEVICE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let api = HidApi::new().map_err(|e| format!("HID initialization failed: {e}"))?;
         let matching_devices: Vec<_> = api
             .device_list()
             .filter(|d| d.vendor_id() == VID && d.product_id() == PID)
             .collect();
-        // HIDAPI enumerates each top-level HID collection separately. This
-        // receiver exposes several collections on the same USB interface
-        // number, so matching only interface_number == 0 can open the
-        // keyboard/auxiliary collection instead of the mouse collection that
-        // carries the vendor feature reports.
-        let info = matching_devices
+        // The Windows implementation opens the vendor feature-report collection
+        // by interface path, not by the Generic Desktop/Mouse top-level usage.
+        // HIDAPI exposes each top-level collection separately, and the mouse
+        // collection can echo an uncompleted report while the vendor collection
+        // carries the actual command response. Probe every collection on the
+        // model's interface using GET_MODE, which is read-only, and keep only the
+        // handle that returns a completed, matching command.
+        let candidates: Vec<_> = matching_devices
             .iter()
             .copied()
-            .find(|d| {
-                is_target_hid_collection(d.interface_number(), d.usage_page(), d.usage())
-            })
-            .ok_or_else(|| {
-                let found = matching_devices
-                    .iter()
-                    .map(|d| format!(
-                        "interface {} usage-page {:#06x} usage {:#06x}",
-                        d.interface_number(), d.usage_page(), d.usage()
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "Razer Naga V2 HyperSpeed vendor mouse collection (USB interface 0, Generic Desktop/Mouse) was not found.                      Detected HID collections: {}. Check the receiver connection, HID permissions, and hidraw backend.",
-                    if found.is_empty() { "none".into() } else { found }
-                )
-            })?;
-        let device = api
-            .open_path(info.path())
-            .map_err(|e| format!("Could not open the Naga vendor HID interface: {e}. Check the device's udev permissions; do not run Sidearm as root."))?;
-        device
-            .set_blocking_mode(true)
-            .map_err(|e| format!("Could not configure blocking HID reads: {e}"))?;
-        Ok(Self { device, _exclusive: exclusive })
+            .filter(|d| is_target_hid_interface(d.interface_number()))
+            .collect();
+        if candidates.is_empty() {
+            let found = matching_devices
+                .iter()
+                .map(|d| format!(
+                    "interface {} usage-page {:#06x} usage {:#04x}",
+                    d.interface_number(), d.usage_page(), d.usage()
+                ))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "Razer Naga V2 HyperSpeed HID interface {INTERFACE} was not found. Detected HID collections: {}. Check the receiver connection and HID permissions.",
+                if found.is_empty() { "none".into() } else { found }
+            ));
+        }
+
+        let mut failures = Vec::new();
+        for info in candidates {
+            let description = format!(
+                "usage-page {:#06x} usage {:#04x}",
+                info.usage_page(), info.usage()
+            );
+            let exclusive = DEVICE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let device = match api.open_path(info.path()) {
+                Ok(device) => device,
+                Err(error) => {
+                    failures.push(format!("{description}: open failed: {error}"));
+                    continue;
+                }
+            };
+            if let Err(error) = device.set_blocking_mode(true) {
+                failures.push(format!("{description}: blocking mode failed: {error}"));
+                continue;
+            }
+            let candidate = Self { device, _exclusive: exclusive };
+            match candidate.command(CLASS_CONTROL, CMD_GET_MODE, &[0x00, 0x00]) {
+                Ok(_) => return Ok(candidate),
+                Err(error) => failures.push(format!("{description}: vendor probe failed: {error}")),
+            }
+        }
+
+        Err(format!(
+            "No Razer Naga V2 HyperSpeed HID collection on interface {INTERFACE} completed the read-only vendor command probe. {}",
+            failures.join("; ")
+        ))
     }
 
     fn command(&self, class: u8, command: u8, args: &[u8]) -> Result<[u8; PAYLOAD_LEN], String> {
