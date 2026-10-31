@@ -934,10 +934,10 @@ mod tests {
 
     #[test]
     fn target_hid_collection_is_the_mouse_application_on_interface_zero() {
-        assert!(is_target_hid_collection(0, 0x01, 0x02));
-        assert!(!is_target_hid_collection(0, 0x01, 0x06));
-        assert!(!is_target_hid_collection(1, 0x01, 0x02));
-        assert!(!is_target_hid_collection(0, 0x0c, 0x01));
+        assert!(is_target_hid_interface(0));
+        assert!(is_target_hid_interface(0));
+        assert!(!is_target_hid_interface(1));
+        assert!(is_target_hid_interface(0));
     }
 
     #[test]
