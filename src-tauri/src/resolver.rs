@@ -697,6 +697,7 @@ mod tests {
                 hypershift_trigger: "mouse_right".into(),
                 show_battery_in_tray: false,
                 offline_profile_id: None,
+                builtin_app_rules_defaults_applied: true,
             },
             profiles: vec![
                 profile("default", "Default", 0),
@@ -1057,6 +1058,7 @@ mod edge_proptests {
                 hypershift_trigger: "mouse_right".into(),
                 show_battery_in_tray: false,
                 offline_profile_id: None,
+                builtin_app_rules_defaults_applied: true,
             },
             profiles: vec![
                 minimal_profile("default", "Default", true),

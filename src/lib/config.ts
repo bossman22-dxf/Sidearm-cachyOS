@@ -84,6 +84,8 @@ export interface Settings {
   /** Profile written into the mouse on exit; absent = the fallback profile,
    *  `OFFLINE_PROFILE_ACTIVE` = the one in effect then. */
   offlineProfileId?: string;
+  /** Internal one-time migration marker; not user-editable. */
+  builtinAppRulesDefaultsApplied?: boolean;
 }
 
 /** `Settings.offlineProfileId` for "the profile in effect at exit" (Rust `config::OFFLINE_PROFILE_ACTIVE`). */
