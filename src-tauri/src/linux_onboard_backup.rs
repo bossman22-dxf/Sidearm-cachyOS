@@ -581,7 +581,7 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
 }
 
 /// Apply the fixed Sidearm convention only when the backup still matches the
-/// connected mouse. A failed write triggers a full raw-record and mode rollback.
+/// connected mouse. A failed write restores only attempted top-button records and the original mode.
 pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
@@ -780,11 +780,19 @@ mod tests {
         assert_eq!(&records[2].bytes[3..7], &[1, 1, 5, 0]);
         assert_eq!((records[3].button_id, records[3].layer), (0x0c, 1));
         assert_eq!(&records[3].bytes[3..7], &[1, 1, 5, 0]);
-        // No thumb or wheel-tilt records are included in the write list.
+        // The four top-button records change only their action bytes. Every
+        // other byte of each record (and every non-target record) is untouched.
         for record in &records {
-            let original = payload.records.iter().find(|item| item.button_id == record.button_id && item.layer == record.layer).unwrap();
-            assert_eq!(&record.bytes[7..10], &original.bytes[7..10]);
+            let original = payload.records.iter()
+                .find(|item| item.button_id == record.button_id && item.layer == record.layer)
+                .unwrap();
+            let mouse_button = if record.button_id == 0x0b { 4 } else { 5 };
+            let mut expected = original.bytes;
+            expected[3..7].copy_from_slice(&[0x01, 0x01, mouse_button, 0x00]);
+            assert_eq!(record.bytes, expected);
         }
+        assert!(payload.records.iter().filter(|record| ![0x0b, 0x0c].contains(&record.button_id))
+            .all(|record| !records.iter().any(|written| written.button_id == record.button_id && written.layer == record.layer)));
     }
 
     #[test]
