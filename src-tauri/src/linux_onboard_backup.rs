@@ -556,30 +556,11 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 }
 
 fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
-    let mut records = Vec::with_capacity(28);
-    for index in 0..12u8 {
-        let button_id = 0x40 + index;
-        let usage = 0x68 + index;
-        for layer in 0..=1 {
-            let mut record = payload
-                .records
-                .iter()
-                .find(|record| record.button_id == button_id && record.layer == layer)
-                .cloned()
-                .ok_or_else(|| format!("backup is missing thumb button {button_id:#04x} layer {layer}"))?;
-            // Change only the action header/value. Keep reserved bytes exactly
-            // as they were in the backup for forward compatibility.
-            record.bytes[3] = 0x02;
-            record.bytes[4] = 0x02;
-            record.bytes[5] = 0x00;
-            record.bytes[6] = usage;
-            records.push(record);
-        }
-    }
-    // The two top auxiliary controls are Back and Forward, exposed as
-    // standard mouse buttons 4 and 5. They have no vendor slot, but the
-    // per-button command can write their onboard records directly. Set both
-    // layers so Hypershift cannot expose stale DPI-stage actions.
+    let mut records = Vec::with_capacity(4);
+    // Change only the two top auxiliary controls: Mouse Button 4 (Back)
+    // and Mouse Button 5 (Forward). Both layers are set so Hypershift cannot
+    // expose the old DPI-stage actions. Every thumb and wheel-tilt record is
+    // deliberately omitted and remains byte-for-byte as found in the backup.
     for (button_id, mouse_button) in [(0x0b, 4), (0x0c, 5)] {
         for layer in 0..=1 {
             let mut record = payload
@@ -762,19 +743,18 @@ mod tests {
             record.bytes[9] = 0xbb;
         }
         let records = sidearm_mapping_records(&payload).unwrap();
-        assert_eq!(records.len(), 28);
-        assert_eq!(&records[0].bytes[3..7], &[2, 2, 0, 0x68]);
-        assert_eq!(&records[23].bytes[3..7], &[2, 2, 0, 0x73]);
+        assert_eq!(records.len(), 4);
         // Top auxiliary 1 is Mouse Button 4 (Back), on both layers.
-        assert_eq!(records[24].button_id, 0x0b);
-        assert_eq!(&records[24].bytes[3..7], &[1, 1, 4, 0]);
-        assert_eq!(&records[25].bytes[3..7], &[1, 1, 4, 0]);
+        assert_eq!((records[0].button_id, records[0].layer), (0x0b, 0));
+        assert_eq!(&records[0].bytes[3..7], &[1, 1, 4, 0]);
+        assert_eq!((records[1].button_id, records[1].layer), (0x0b, 1));
+        assert_eq!(&records[1].bytes[3..7], &[1, 1, 4, 0]);
         // Top auxiliary 2 is Mouse Button 5 (Forward), on both layers.
-        assert_eq!(records[26].button_id, 0x0c);
-        assert_eq!(&records[26].bytes[3..7], &[1, 1, 5, 0]);
-        assert_eq!(&records[27].bytes[3..7], &[1, 1, 5, 0]);
-        // Only the 12 thumb controls and two top auxiliary controls are written.
-        assert!(records.iter().all(|record| !matches!(record.button_id, 0x34 | 0x35)));
+        assert_eq!((records[2].button_id, records[2].layer), (0x0c, 0));
+        assert_eq!(&records[2].bytes[3..7], &[1, 1, 5, 0]);
+        assert_eq!((records[3].button_id, records[3].layer), (0x0c, 1));
+        assert_eq!(&records[3].bytes[3..7], &[1, 1, 5, 0]);
+        // No thumb or wheel-tilt records are included in the write list.
         for record in &records {
             let original = payload.records.iter().find(|item| item.button_id == record.button_id && item.layer == record.layer).unwrap();
             assert_eq!(&record.bytes[7..10], &original.bytes[7..10]);
