@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { OFFLINE_PROFILE_ACTIVE, type AppConfig, type Profile } from "../lib/config";
 import { upsertProfile } from "../lib/config-editing";
 import {
@@ -68,6 +67,7 @@ export function MouseWorkspace({
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupSaved, setBackupSaved] = useState(false);
   const [mappingApplied, setMappingApplied] = useState(false);
+  const [mappingBackupPath, setMappingBackupPath] = useState<string | null>(null);
 
   async function run(request: () => Promise<MouseSettingsState>) {
     setBusy(true);
@@ -146,10 +146,11 @@ export function MouseWorkspace({
     }
   }
 
-  async function applySidearmMapping() {
+  async function prepareSidearmMapping() {
     setBackupBusy(true);
     setBackupSaved(false);
     setMappingApplied(false);
+    setMappingBackupPath(null);
     try {
       const backup = await createOnboardBackup();
       if (!backup) return;
@@ -158,13 +159,22 @@ export function MouseWorkspace({
         setError(t("mouse.backupIncomplete"));
         return;
       }
-      const approved = await ask(t("mouse.mappingConfirm"), {
-        title: t("mouse.mappingTitle"),
-        kind: "warning",
-      });
-      if (!approved) return;
-      await applyNagaStandardMapping(backup.path);
+      setMappingBackupPath(backup.path);
+      setError(null);
+    } catch (unknownError) {
+      setError(normalizeCommandError(unknownError).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function confirmSidearmMapping() {
+    if (!mappingBackupPath) return;
+    setBackupBusy(true);
+    try {
+      await applyNagaStandardMapping(mappingBackupPath);
       setMappingApplied(true);
+      setMappingBackupPath(null);
       setError(null);
     } catch (unknownError) {
       setError(normalizeCommandError(unknownError).message);
@@ -371,18 +381,41 @@ export function MouseWorkspace({
                 onClick={() => void saveOnboardBackup()}
                 disabled={backupBusy}
               >
-                {backupBusy ? t("mouse.backupBusy") : t("mouse.backupButton")}
+                {backupBusy ? (mappingBackupPath ? t("mouse.mappingApplying") : t("mouse.backupBusy")) : t("mouse.backupButton")}
               </button>
               <button
                 type="button"
                 className="action-button action-button--primary action-button--small"
-                onClick={() => void applySidearmMapping()}
+                onClick={() => void prepareSidearmMapping()}
                 disabled={backupBusy}
               >
                 {t("mouse.mappingButton")}
               </button>
             </div>
           </SettingRow>
+          {mappingBackupPath !== null ? (
+            <Notice variant="warning" className="mt-12">
+              <p>{t("mouse.mappingConfirm")}</p>
+              <div className="mouse-signals mt-8">
+                <button
+                  type="button"
+                  className="action-button action-button--secondary action-button--small"
+                  onClick={() => setMappingBackupPath(null)}
+                  disabled={backupBusy}
+                >
+                  {t("mouse.mappingCancel")}
+                </button>
+                <button
+                  type="button"
+                  className="action-button action-button--primary action-button--small"
+                  onClick={() => void confirmSidearmMapping()}
+                  disabled={backupBusy}
+                >
+                  {backupBusy ? t("mouse.mappingApplying") : t("mouse.mappingApply")}
+                </button>
+              </div>
+            </Notice>
+          ) : null}
           {backupSaved ? <p className="panel__muted help-sm" role="status">{t("mouse.backupSaved")}</p> : null}
           {mappingApplied ? <p className="panel__muted help-sm" role="status">{t("mouse.mappingApplied")}</p> : null}
         </section>
