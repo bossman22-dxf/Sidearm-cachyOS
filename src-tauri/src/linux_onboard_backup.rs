@@ -591,6 +591,7 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
             record.bytes[3] = 0x01; // plain mouse-button category
             record.bytes[4] = 0x01; // one-byte mouse-button value
             record.bytes[5] = mouse_button;
+            record.bytes[6] = 0x00; // clear the unused second value byte
             records.push(record);
         }
     }
