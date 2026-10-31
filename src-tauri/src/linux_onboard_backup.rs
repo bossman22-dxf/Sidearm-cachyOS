@@ -20,8 +20,6 @@ use std::{
 const VID: u16 = 0x1532;
 const PID: u16 = 0x00b4;
 const INTERFACE: i32 = 0;
-const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
-const USAGE_MOUSE: u16 = 0x02;
 const REPORT_ID: u8 = 0x03;
 const PAYLOAD_LEN: usize = 90;
 const COMMAND_STATUS_NEW: u8 = 0x00;
