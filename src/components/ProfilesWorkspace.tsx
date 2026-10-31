@@ -568,7 +568,7 @@ export function ProfilesWorkspace({
       processPath: undefined,
       titleIncludes: undefined,
       profileId: activeProfile.id,
-      enabled: true,
+      enabled: false,
       priority: activeProfile.priority,
     });
   }
