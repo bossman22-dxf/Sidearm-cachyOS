@@ -2165,20 +2165,20 @@ fn seed_physical_controls() -> Vec<PhysicalControl> {
         physical_control(
             ControlId::new("mouse_4"),
             ControlFamily::TopPanel,
-            "Mouse 4",
-            Some("Forward"),
+            "Wheel Tilt Left",
+            Some("Scroll Left"),
             true,
             CapabilityStatus::Verified,
-            Some("Verified: Alt+F13 standard layer confirmed via hardware test."),
+            Some("Naga V2 HyperSpeed wheel tilt; Sidearm maps this to horizontal scroll left by default."),
         ),
         physical_control(
             ControlId::new("mouse_5"),
             ControlFamily::TopPanel,
-            "Mouse 5",
-            Some("Back"),
+            "Wheel Tilt Right",
+            Some("Scroll Right"),
             true,
             CapabilityStatus::Verified,
-            Some("Verified: Alt+F14 standard layer confirmed via hardware test."),
+            Some("Naga V2 HyperSpeed wheel tilt; Sidearm maps this to horizontal scroll right by default."),
         ),
         physical_control(
             ControlId::new("wheel_up"),
@@ -3000,6 +3000,29 @@ fn seed_actions() -> Vec<Action> {
         ));
     }
 
+    // The Naga V2 HyperSpeed reports wheel tilt as native Mouse 4 / Mouse 5.
+    // Bind those controls to horizontal scrolling by default; the platform
+    // capture backends translate their physical events into these actions.
+    for (control, display_name, action) in [
+        (ControlId::new("mouse_4"), "Scroll Left", MouseActionKind::ScrollLeft),
+        (ControlId::new("mouse_5"), "Scroll Right", MouseActionKind::ScrollRight),
+    ] {
+        actions.push(Action {
+            id: action_id("default", Layer::Standard, &control),
+            action_type: ActionType::MouseAction,
+            payload: ActionPayload::MouseAction(MouseActionPayload {
+                action,
+                ctrl: false,
+                shift: false,
+                alt: false,
+                win: false,
+            }),
+            display_name: display_name.into(),
+            notes: Some("Default Naga wheel-tilt action; change the binding to customize it.".into()),
+            conditions: Vec::new(),
+        });
+    }
+
     actions
 }
 
@@ -3013,6 +3036,8 @@ fn seed_bindings() -> Vec<Binding> {
         ("default", Layer::Standard, ControlId::new("thumb_04"), "Undo"),
         ("default", Layer::Standard, ControlId::new("thumb_05"), "Save"),
         ("default", Layer::Standard, ControlId::new("thumb_06"), "Close tab"),
+        ("default", Layer::Standard, ControlId::new("mouse_4"), "Wheel Tilt Left"),
+        ("default", Layer::Standard, ControlId::new("mouse_5"), "Wheel Tilt Right"),
         ("main", Layer::Standard, ControlId::new("thumb_01"), "Delete"),
         ("main", Layer::Standard, ControlId::new("thumb_02"), "Backspace"),
         ("main", Layer::Standard, ControlId::new("thumb_03"), "Shift + F3"),
@@ -3194,7 +3219,7 @@ fn app_mapping(id: &str, exe: &str, profile_id: &str, priority: i32) -> AppMappi
         process_path: None,
         title_includes: Vec::new(),
         profile_id: profile_id.into(),
-        enabled: true,
+        enabled: false,
         priority,
         compiled_title_regexes: Vec::new(),
     }
@@ -3357,6 +3382,37 @@ mod tests {
         );
         assert_eq!(config.profiles.len(), 7);
         assert_eq!(config.physical_controls.len(), NAGA_CONTROL_IDS.len());
+        assert!(config.app_mappings.iter().all(|mapping| !mapping.enabled));
+    }
+
+    #[test]
+    fn naga_wheel_tilt_defaults_to_horizontal_scroll() {
+        let config = default_seed_config();
+
+        for (control_id, expected_action) in [
+            (ControlId::new("mouse_4"), MouseActionKind::ScrollLeft),
+            (ControlId::new("mouse_5"), MouseActionKind::ScrollRight),
+        ] {
+            let binding = config.bindings.iter().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id == control_id
+                    && binding.enabled
+            }).expect("wheel tilt should have an enabled default binding");
+            let action = config.actions.iter().find(|action| action.id == binding.action_id)
+                .expect("wheel tilt binding should resolve to an action");
+            assert_eq!(action.action_type, ActionType::MouseAction);
+            assert_eq!(
+                action.payload,
+                ActionPayload::MouseAction(MouseActionPayload {
+                    action: expected_action,
+                    ctrl: false,
+                    shift: false,
+                    alt: false,
+                    win: false,
+                })
+            );
+        }
     }
 
     #[test]
