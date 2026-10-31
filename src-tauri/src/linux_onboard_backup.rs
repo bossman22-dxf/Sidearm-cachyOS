@@ -556,7 +556,7 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 }
 
 fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
-    let mut records = Vec::with_capacity(32);
+    let mut records = Vec::with_capacity(28);
     for index in 0..12u8 {
         let button_id = 0x40 + index;
         let usage = 0x68 + index;
@@ -596,20 +596,6 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
         }
     }
 
-    for (button_id, mouse_button) in [(0x34, 4), (0x35, 5)] {
-        for layer in 0..=1 {
-            let mut record = payload
-                .records
-                .iter()
-                .find(|record| record.button_id == button_id && record.layer == layer)
-                .cloned()
-                .ok_or_else(|| format!("backup is missing native button {button_id:#04x} layer {layer}"))?;
-            record.bytes[3] = 0x01;
-            record.bytes[4] = 0x01;
-            record.bytes[5] = mouse_button;
-            records.push(record);
-        }
-    }
     Ok(records)
 }
 
@@ -776,7 +762,7 @@ mod tests {
             record.bytes[9] = 0xbb;
         }
         let records = sidearm_mapping_records(&payload).unwrap();
-        assert_eq!(records.len(), 32);
+        assert_eq!(records.len(), 28);
         assert_eq!(&records[0].bytes[3..7], &[2, 2, 0, 0x68]);
         assert_eq!(&records[23].bytes[3..7], &[2, 2, 0, 0x73]);
         // Top auxiliary 1 is Mouse Button 4 (Back), on both layers.
@@ -787,9 +773,8 @@ mod tests {
         assert_eq!(records[26].button_id, 0x0c);
         assert_eq!(&records[26].bytes[3..7], &[1, 1, 5, 0]);
         assert_eq!(&records[27].bytes[3..7], &[1, 1, 5, 0]);
-        // Wheel-tilt records remain unchanged by this top-button mapping.
-        assert_eq!(&records[28].bytes[3..6], &[1, 1, 4]);
-        assert_eq!(&records[31].bytes[3..6], &[1, 1, 5]);
+        // Only the 12 thumb controls and two top auxiliary controls are written.
+        assert!(records.iter().all(|record| !matches!(record.button_id, 0x34 | 0x35)));
         for record in &records {
             let original = payload.records.iter().find(|item| item.button_id == record.button_id && item.layer == record.layer).unwrap();
             assert_eq!(&record.bytes[7..10], &original.bytes[7..10]);
