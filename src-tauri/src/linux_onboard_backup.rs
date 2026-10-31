@@ -605,6 +605,28 @@ pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
         }
     }
 
+    // Resolve both the new values and their exact originals before changing
+    // mode or touching the device. The write list contains only four records:
+    // the two top auxiliary buttons on the standard and Hypershift layers.
+    let mappings = sidearm_mapping_records(payload)?;
+    let original_mappings: Vec<&RawButtonRecord> = mappings
+        .iter()
+        .map(|mapping| {
+            payload
+                .records
+                .iter()
+                .find(|record| {
+                    record.button_id == mapping.button_id && record.layer == mapping.layer
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "backup is missing original button {:#04x} layer {}",
+                        mapping.button_id, mapping.layer
+                    )
+                })
+        })
+        .collect::<Result<_, _>>()?;
+
     let original_mode = match device.ensure_normal_mode() {
         Ok(mode) => mode,
         Err(error) => {
@@ -616,10 +638,14 @@ pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
         }
     };
 
-    for mapping in sidearm_mapping_records(payload)? {
-        if let Err(error) = device.write_raw_record(&mapping) {
+    // Roll back only records this operation actually attempted. Never rewrite
+    // the thumb-button or other unrelated records, even during recovery.
+    let mut attempted_originals: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
+    for (mapping, original) in mappings.iter().zip(original_mappings.iter()) {
+        attempted_originals.push(original);
+        if let Err(error) = device.write_raw_record(mapping) {
             let mut rollback_errors = Vec::new();
-            for original in &payload.records {
+            for original in attempted_originals.iter().rev() {
                 if let Err(rollback) = device.write_raw_record(original) {
                     rollback_errors.push(rollback);
                 }
@@ -628,7 +654,7 @@ pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
                 rollback_errors.push(rollback);
             }
             if rollback_errors.is_empty() {
-                return Err(format!("mapping failed and the original backup was restored: {error}"));
+                return Err(format!("mapping failed and the original top-button records were restored: {error}"));
             }
             return Err(format!(
                 "mapping failed: {error}; rollback also had {} error(s): {}",
