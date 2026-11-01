@@ -995,6 +995,8 @@ mod tests {
         let config = crate::config::default_seed_config();
         let records = sidearm_mapping_records(&payload, &config).unwrap();
         assert_eq!(records.len(), 42);
+        assert!(records.windows(2).all(|pair| pair[0].layer >= pair[1].layer),
+            "Hypershift records must be written before the normal layer");
         for button_id in [
             0x40u8, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
             0x0b, 0x0c, 0x01, 0x02, 0x03, 0x09, 0x0a, 0x34, 0x35,
@@ -1056,6 +1058,7 @@ mod tests {
         }
         let swapped = sidearm_swap_records(&payload).unwrap();
         assert_eq!(swapped.len(), 8);
+        assert!(swapped.windows(2).all(|pair| pair[0].layer >= pair[1].layer));
         for layer in 0..=1 {
             for (top, tilt) in [(0x0b, 0x34), (0x0c, 0x35)] {
                 let a = payload.records.iter().find(|r| r.button_id == top && r.layer == layer).unwrap();
@@ -1164,20 +1167,20 @@ mod tests {
     }
 
     #[test]
-    fn response_reader_bounds_repeated_new_status() {
+    fn response_reader_rejects_unknown_zero_status() {
         let request = battery_request();
         let mut reads = 0;
         let error = wait_for_command_reply(
             &request,
             || {
                 reads += 1;
-                Ok(response_for(&request, COMMAND_STATUS_NEW))
+                Ok(response_for(&request, 0x00))
             },
             |_| {},
         )
         .unwrap_err();
-        assert_eq!(reads, RESPONSE_POLL_ATTEMPTS);
-        assert!(error.contains("last response status 0x00"));
+        assert_eq!(reads, 1);
+        assert!(error.contains("invalid HID response status 0x00"));
     }
 
     #[test]
@@ -1185,6 +1188,7 @@ mod tests {
         let request = battery_request();
         let mut stale = response_for(&request, COMMAND_STATUS_OK);
         stale[7] = 0x81;
+        stale[88] = checksum(&stale);
         let expected = response_for(&request, COMMAND_STATUS_OK);
         let mut replies = [stale, expected].into_iter();
         let reply = wait_for_command_reply(
