@@ -213,7 +213,7 @@ export function MouseWorkspace({
             <span className="settings-section__title">{t("mouse.mappingReviewTitle")}</span>
           </div>
           {mappingApplied ? (
-            <Notice variant="success">
+            <Notice variant="ok">
               <p role="status">{t("mouse.mappingApplied")}</p>
               <p className="panel__muted help-sm">
                 {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
