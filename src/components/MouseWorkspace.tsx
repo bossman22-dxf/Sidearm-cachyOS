@@ -4,6 +4,7 @@ import { OFFLINE_PROFILE_ACTIVE, type AppConfig, type Profile } from "../lib/con
 import { upsertProfile } from "../lib/config-editing";
 import {
   applyNagaStandardMapping,
+  swapNagaAuxiliaryAndTiltDirections,
   createOnboardBackup,
   getDeviceReport,
   getMouseSettings,
@@ -68,6 +69,8 @@ export function MouseWorkspace({
   const [backupSaved, setBackupSaved] = useState(false);
   const [mappingApplied, setMappingApplied] = useState(false);
   const [mappingBackupPath, setMappingBackupPath] = useState<string | null>(null);
+  const [swapBackupPath, setSwapBackupPath] = useState<string | null>(null);
+  const [swapApplied, setSwapApplied] = useState(false);
 
   async function run(request: () => Promise<MouseSettingsState>) {
     setBusy(true);
@@ -182,6 +185,42 @@ export function MouseWorkspace({
     }
   }
 
+  async function prepareAuxiliaryTiltSwap() {
+    setBackupBusy(true);
+    setBackupSaved(false);
+    setSwapApplied(false);
+    setSwapBackupPath(null);
+    try {
+      const backup = await createOnboardBackup();
+      if (!backup) return;
+      setBackupSaved(true);
+      if (!backup.complete) {
+        setError(t("mouse.backupIncomplete"));
+        return;
+      }
+      setSwapBackupPath(backup.path);
+      setError(null);
+    } catch (unknownError) {
+      setError(normalizeCommandError(unknownError).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function confirmAuxiliaryTiltSwap() {
+    if (!swapBackupPath) return;
+    setBackupBusy(true);
+    try {
+      await swapNagaAuxiliaryAndTiltDirections(swapBackupPath);
+      setSwapApplied(true);
+      setError(null);
+    } catch (unknownError) {
+      setError(normalizeCommandError(unknownError).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   /** Switches what the key buttons send (a running capture restarts to follow). */
   async function switchSignals(consumer: boolean) {
     setSignalsSwitch(consumer);
@@ -205,24 +244,27 @@ export function MouseWorkspace({
 
   // The setup flow gets its own full workspace screen. The only path that
   // writes onboard memory is the explicit Apply button on this screen.
-  if (mappingBackupPath !== null) {
+  if (mappingBackupPath !== null || swapBackupPath !== null) {
+    const swapping = swapBackupPath !== null;
+    const reviewPath = swapping ? swapBackupPath : mappingBackupPath;
+    const operationApplied = swapping ? swapApplied : mappingApplied;
     return (
       <div className="settings-shell__content">
         <section className="settings-section">
           <div className="settings-section__header">
-            <span className="settings-section__title">{t("mouse.mappingReviewTitle")}</span>
+            <span className="settings-section__title">{t(swapping ? "mouse.swapReviewTitle" : "mouse.mappingReviewTitle")}</span>
           </div>
-          {mappingApplied ? (
+          {operationApplied ? (
             <Notice variant="ok">
-              <p role="status">{t("mouse.mappingApplied")}</p>
+              <p role="status">{t(swapping ? "mouse.swapApplied" : "mouse.mappingApplied")}</p>
               <p className="panel__muted help-sm">
-                {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
+                {t("mouse.mappingBackupLocation", { path: reviewPath })}
               </p>
             </Notice>
           ) : (
             <>
               <Notice variant="warning">
-                <p>{t("mouse.mappingConfirm")}</p>
+                <p>{t(swapping ? "mouse.swapConfirm" : "mouse.mappingConfirm")}</p>
                 <p className="panel__muted help-sm">
                   {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
                 </p>
@@ -242,20 +284,22 @@ export function MouseWorkspace({
               onClick={() => {
                 setMappingBackupPath(null);
                 setMappingApplied(false);
+                setSwapBackupPath(null);
+                setSwapApplied(false);
                 setError(null);
               }}
               disabled={backupBusy}
             >
-              {mappingApplied ? t("common.close") : t("mouse.mappingCancel")}
+              {operationApplied ? t("common.close") : t("mouse.mappingCancel")}
             </button>
-            {!mappingApplied ? (
+            {!operationApplied ? (
               <button
                 type="button"
                 className="action-button action-button--primary"
-                onClick={() => void confirmSidearmMapping()}
+                onClick={() => void (swapping ? confirmAuxiliaryTiltSwap() : confirmSidearmMapping())}
                 disabled={backupBusy}
               >
-                {backupBusy ? t("mouse.mappingApplying") : t("mouse.mappingApply")}
+                {backupBusy ? t(swapping ? "mouse.swapApplying" : "mouse.mappingApplying") : t(swapping ? "mouse.swapApply" : "mouse.mappingApply")}
               </button>
             ) : null}
           </div>
@@ -450,6 +494,14 @@ export function MouseWorkspace({
                 disabled={backupBusy}
               >
                 {t("mouse.mappingButton")}
+              </button>
+              <button
+                type="button"
+                className="action-button action-button--secondary action-button--small"
+                onClick={() => void prepareAuxiliaryTiltSwap()}
+                disabled={backupBusy}
+              >
+                {t("mouse.swapButton")}
               </button>
             </div>
           </SettingRow>
