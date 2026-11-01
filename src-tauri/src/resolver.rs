@@ -698,6 +698,7 @@ mod tests {
                 show_battery_in_tray: false,
                 offline_profile_id: None,
                 builtin_app_rules_defaults_applied: true,
+                naga_default_layout_applied: false,
             },
             profiles: vec![
                 profile("default", "Default", 0),
@@ -1059,6 +1060,7 @@ mod edge_proptests {
                 show_battery_in_tray: false,
                 offline_profile_id: None,
                 builtin_app_rules_defaults_applied: true,
+                naga_default_layout_applied: false,
             },
             profiles: vec![
                 minimal_profile("default", "Default", true),
