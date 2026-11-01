@@ -174,7 +174,6 @@ export function MouseWorkspace({
     try {
       await applyNagaStandardMapping(mappingBackupPath);
       setMappingApplied(true);
-      setMappingBackupPath(null);
       setError(null);
     } catch (unknownError) {
       setError(normalizeCommandError(unknownError).message);
@@ -213,29 +212,52 @@ export function MouseWorkspace({
           <div className="settings-section__header">
             <span className="settings-section__title">{t("mouse.mappingReviewTitle")}</span>
           </div>
-          <Notice variant="warning">
-            <p>{t("mouse.mappingConfirm")}</p>
-            <p className="panel__muted help-sm">
-              {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
-            </p>
-          </Notice>
+          {mappingApplied ? (
+            <Notice variant="success">
+              <p role="status">{t("mouse.mappingApplied")}</p>
+              <p className="panel__muted help-sm">
+                {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
+              </p>
+            </Notice>
+          ) : (
+            <>
+              <Notice variant="warning">
+                <p>{t("mouse.mappingConfirm")}</p>
+                <p className="panel__muted help-sm">
+                  {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
+                </p>
+              </Notice>
+              {error ? (
+                <Notice variant="warning" className="mt-12">
+                  <p>{t("mouse.unavailable")}</p>
+                  <p className="panel__muted help-caption">{error}</p>
+                </Notice>
+              ) : null}
+            </>
+          )}
           <div className="mouse-signals mt-12">
             <button
               type="button"
               className="action-button action-button--secondary"
-              onClick={() => setMappingBackupPath(null)}
+              onClick={() => {
+                setMappingBackupPath(null);
+                setMappingApplied(false);
+                setError(null);
+              }}
               disabled={backupBusy}
             >
-              {t("mouse.mappingCancel")}
+              {mappingApplied ? t("common.close") : t("mouse.mappingCancel")}
             </button>
-            <button
-              type="button"
-              className="action-button action-button--primary"
-              onClick={() => void confirmSidearmMapping()}
-              disabled={backupBusy}
-            >
-              {backupBusy ? t("mouse.mappingApplying") : t("mouse.mappingApply")}
-            </button>
+            {!mappingApplied ? (
+              <button
+                type="button"
+                className="action-button action-button--primary"
+                onClick={() => void confirmSidearmMapping()}
+                disabled={backupBusy}
+              >
+                {backupBusy ? t("mouse.mappingApplying") : t("mouse.mappingApply")}
+              </button>
+            ) : null}
           </div>
         </section>
       </div>
