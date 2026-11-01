@@ -788,12 +788,12 @@ mod tests {
             record.bytes[8] = 0xaa;
             record.bytes[9] = 0xbb;
         }
-        let bindings = (1..=12).map(|number| crate::mouse_memory::OnboardBinding {
+        let bindings = (1..=12).map(|number| LinuxOnboardBinding {
             control_id: format!("thumb_{number:02}"),
             encoded_key: format!("F{}", number + 12),
         }).chain([
-            crate::mouse_memory::OnboardBinding { control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into() },
-            crate::mouse_memory::OnboardBinding { control_id: "top_aux_02".into(), encoded_key: "Alt+F24".into() },
+            LinuxOnboardBinding { control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into() },
+            LinuxOnboardBinding { control_id: "top_aux_02".into(), encoded_key: "Alt+F24".into() },
         ]).collect::<Vec<_>>();
 
         let records = sidearm_mapping_records(&payload, &bindings).unwrap();
@@ -819,15 +819,15 @@ mod tests {
     #[test]
     fn profile_mapping_rejects_missing_or_duplicate_encoder_bindings() {
         let payload = complete_payload();
-        let mut bindings = (1..=12).map(|number| crate::mouse_memory::OnboardBinding {
+        let mut bindings = (1..=12).map(|number| LinuxOnboardBinding {
             control_id: format!("thumb_{number:02}"),
             encoded_key: format!("F{}", number + 12),
         }).collect::<Vec<_>>();
-        bindings.push(crate::mouse_memory::OnboardBinding {
+        bindings.push(LinuxOnboardBinding {
             control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into(),
         });
         assert!(sidearm_mapping_records(&payload, &bindings).unwrap_err().contains("top_aux_02"));
-        bindings.push(crate::mouse_memory::OnboardBinding {
+        bindings.push(LinuxOnboardBinding {
             control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into(),
         });
         assert!(sidearm_mapping_records(&payload, &bindings).unwrap_err().contains("duplicate"));
