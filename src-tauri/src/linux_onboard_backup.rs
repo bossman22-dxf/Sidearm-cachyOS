@@ -936,7 +936,11 @@ where
     }).collect::<Result<_, _>>()?;
 
     let mut failure = None;
-    for mapping in &mappings {
+    let mut attempted_originals: Vec<RawButtonRecord> = Vec::with_capacity(mappings.len());
+    for (mapping, original) in mappings.iter().zip(originals.iter()) {
+        // A timed-out SET may still have reached flash, so include the current
+        // record in rollback before sending the command.
+        attempted_originals.push((**original).clone());
         if let Err(error) = device.write_raw_record(mapping) {
             failure = Some(error);
             break;
@@ -950,11 +954,29 @@ where
 
     if let Some(error) = failure {
         let mut rollback_errors = Vec::new();
-        // Include the write that may have timed out after the receiver applied
-        // it, plus the standard-layer cleanup record paired with any changed
-        // Hypershift write. Rewriting the live snapshot is safe and idempotent.
-        let mut rollback_records: Vec<RawButtonRecord> =
-            originals.iter().map(|record| (*record).clone()).collect();
+        // Restore only records whose SET was attempted. If a Hypershift SET
+        // may have reached flash, also write that same control's normal layer
+        // to clear the receiver's layer-status flag before considering rollback
+        // complete. This avoids touching unrelated, unattempted controls.
+        let mut rollback_records = attempted_originals;
+        let shifted_ids: BTreeSet<u8> = rollback_records.iter()
+            .filter(|record| record.layer == 1)
+            .map(|record| record.button_id)
+            .collect();
+        let mut rollback_addresses: BTreeSet<(u8, u8)> = rollback_records.iter()
+            .map(|record| (record.button_id, record.layer))
+            .collect();
+        for button_id in shifted_ids {
+            if rollback_addresses.insert((button_id, 0)) {
+                if let Some(original) = current_by_address.get(&(button_id, 0)) {
+                    rollback_records.push((**original).clone());
+                } else {
+                    rollback_errors.push(format!(
+                        "missing original normal-layer record for button {button_id:#04x} during rollback"
+                    ));
+                }
+            }
+        }
         rollback_records.sort_by_key(|record| std::cmp::Reverse(record.layer));
         for record in &rollback_records {
             if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
