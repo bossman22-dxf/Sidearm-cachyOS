@@ -844,8 +844,10 @@ where
         for record in &rollback_records {
             if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
         }
-        if rollback_errors.is_empty() {
-            if let Err(e) = device.verify_active_mirror(&rollback_records) { rollback_errors.push(e); }
+        if rollback_errors.is_empty()
+            && let Err(e) = device.verify_active_mirror(&rollback_records)
+        {
+            rollback_errors.push(e);
         }
         if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
         if rollback_errors.is_empty() {
