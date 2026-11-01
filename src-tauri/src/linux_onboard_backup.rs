@@ -825,26 +825,35 @@ where
         }
     };
     let mut attempted: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
+    let mut failure = None;
     for (mapping, original) in mappings.iter().zip(originals.iter()) {
         attempted.push(original);
         if let Err(error) = device.write_raw_record(mapping) {
-            let mut rollback_errors = Vec::new();
-            let mut rollback_records: Vec<RawButtonRecord> = attempted.iter().map(|record| (*record).clone()).collect();
-            rollback_records.sort_by_key(|record| std::cmp::Reverse(record.layer));
-            for record in &rollback_records {
-                if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
-            }
-            if rollback_errors.is_empty() {
-                if let Err(e) = device.verify_active_mirror(&rollback_records) { rollback_errors.push(e); }
-            }
-            if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
-            if rollback_errors.is_empty() {
-                return Err(format!("mapping failed and the original target records were restored: {error}"));
-            }
-            return Err(format!("mapping failed: {error}; rollback also had {} error(s): {}", rollback_errors.len(), rollback_errors.join("; ")));
+            failure = Some(error);
+            break;
         }
     }
-    device.verify_active_mirror(&mappings)?;
+    if failure.is_none() {
+        failure = device.verify_active_mirror(&mappings).err();
+    }
+    if let Some(error) = failure {
+        let mut rollback_errors = Vec::new();
+        let mut rollback_records: Vec<RawButtonRecord> =
+            attempted.iter().map(|record| (*record).clone()).collect();
+        rollback_records.sort_by_key(|record| std::cmp::Reverse(record.layer));
+        for record in &rollback_records {
+            if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
+        }
+        if rollback_errors.is_empty() {
+            if let Err(e) = device.verify_active_mirror(&rollback_records) { rollback_errors.push(e); }
+        }
+        if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
+        if rollback_errors.is_empty() {
+            return Err(format!("mapping failed and the original target records were restored: {error}"));
+        }
+        return Err(format!("mapping failed: {error}; rollback also had {} error(s): {}",
+            rollback_errors.len(), rollback_errors.join("; ")));
+    }
     Ok(())
 }
 
