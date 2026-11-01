@@ -162,11 +162,10 @@ export function MouseWorkspace({
         setError(t("mouse.backupIncomplete"));
         return;
       }
+      // Stop after the backup so the user can review and explicitly confirm
+      // overwriting the mouse's onboard button records on the next screen.
       setMappingBackupPath(backup.path);
       setError(null);
-      // One click performs the complete backup-then-apply operation.
-      await applyNagaStandardMapping(backup.path);
-      setMappingApplied(true);
     } catch (unknownError) {
       setError(normalizeCommandError(unknownError).message);
     } finally {
