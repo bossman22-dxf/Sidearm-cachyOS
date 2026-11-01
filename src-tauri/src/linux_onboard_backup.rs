@@ -1,8 +1,8 @@
-//! Read-only Linux HID access for the verified Naga V2 HyperSpeed.
+//! Linux HID access for the verified Naga V2 HyperSpeed.
 //!
-//! Sending a vendor feature report is required to issue the protocol's GET
-//! commands; only the explicitly invoked DPI/poll controls and recovery method
-//! send writes. Backup creation itself never modifies the mouse.
+//! Backups and status reads are read-only. Onboard profile writes, DPI/poll
+//! changes, and recovery writes are explicit operations and verify hardware
+//! readback before reporting success.
 
 use crate::onboard_backup::{
     DeviceIdentity, OnboardBackup, RawButtonRecord, ReadFailure, ReadableSettings,
