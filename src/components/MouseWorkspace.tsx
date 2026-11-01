@@ -16,7 +16,7 @@ import {
   setMouseDpi,
   setMousePollRate,
 } from "../lib/backend";
-import { onboardBindings, type MouseSettings as MouseSettingsState, type MouseStatusKind, type NativeModelInfo } from "../lib/onboard-mapping";
+import type { MouseSettings as MouseSettingsState, MouseStatusKind, NativeModelInfo } from "../lib/onboard-mapping";
 import { PillTrack } from "./PillTrack";
 import { Notice, SelectField, SettingRow, Toggle } from "./shared";
 
@@ -172,7 +172,7 @@ export function MouseWorkspace({
     if (!mappingBackupPath) return;
     setBackupBusy(true);
     try {
-      await applyNagaStandardMapping(mappingBackupPath, onboardBindings(activeConfig));
+      await applyNagaStandardMapping(mappingBackupPath);
       setMappingApplied(true);
       setError(null);
     } catch (unknownError) {
@@ -222,7 +222,7 @@ export function MouseWorkspace({
           ) : (
             <>
               <Notice variant="warning">
-                <p>{t("mouse.mappingConfirm", { profile: activeProfile?.name ?? "Default" })}</p>
+                <p>{t("mouse.mappingConfirm")}</p>
                 <p className="panel__muted help-sm">
                   {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
                 </p>
