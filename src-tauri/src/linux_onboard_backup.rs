@@ -854,9 +854,9 @@ fn apply_mapping_records<F>(path: &Path, build: F) -> Result<(), String>
 where
     F: FnOnce(&SnapshotPayload) -> Result<Vec<RawButtonRecord>, String>,
 {
-    // The backup remains the recovery point and supplies the device/mode
-    // identity, but it is no longer used as the mapping baseline. Compare the
-    // requested profile with what is actually stored in the mouse right now.
+    // Keep the validated backup as the user's recovery file and receiver-model
+    // check, but do not use its old button records as the mapping baseline.
+    // Compare the requested profile with what is stored in the mouse right now.
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
