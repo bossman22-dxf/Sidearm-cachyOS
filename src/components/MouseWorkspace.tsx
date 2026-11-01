@@ -204,6 +204,44 @@ export function MouseWorkspace({
     dpiValue >= model.dpiMin &&
     dpiValue <= model.dpiMax;
 
+  // The setup flow gets its own full workspace screen. The only path that
+  // writes onboard memory is the explicit Apply button on this screen.
+  if (mappingBackupPath !== null) {
+    return (
+      <div className="settings-shell__content">
+        <section className="settings-section">
+          <div className="settings-section__header">
+            <span className="settings-section__title">{t("mouse.mappingReviewTitle")}</span>
+          </div>
+          <Notice variant="warning">
+            <p>{t("mouse.mappingConfirm")}</p>
+            <p className="panel__muted help-sm">
+              {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
+            </p>
+          </Notice>
+          <div className="mouse-signals mt-12">
+            <button
+              type="button"
+              className="action-button action-button--secondary"
+              onClick={() => setMappingBackupPath(null)}
+              disabled={backupBusy}
+            >
+              {t("mouse.mappingCancel")}
+            </button>
+            <button
+              type="button"
+              className="action-button action-button--primary"
+              onClick={() => void confirmSidearmMapping()}
+              disabled={backupBusy}
+            >
+              {backupBusy ? t("mouse.mappingApplying") : t("mouse.mappingApply")}
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="settings-shell__content">
       {mouseStates.flatMap((kind) => {
@@ -393,29 +431,6 @@ export function MouseWorkspace({
               </button>
             </div>
           </SettingRow>
-          {mappingBackupPath !== null ? (
-            <Notice variant="warning" className="mt-12">
-              <p>{t("mouse.mappingConfirm")}</p>
-              <div className="mouse-signals mt-8">
-                <button
-                  type="button"
-                  className="action-button action-button--secondary action-button--small"
-                  onClick={() => setMappingBackupPath(null)}
-                  disabled={backupBusy}
-                >
-                  {t("mouse.mappingCancel")}
-                </button>
-                <button
-                  type="button"
-                  className="action-button action-button--primary action-button--small"
-                  onClick={() => void confirmSidearmMapping()}
-                  disabled={backupBusy}
-                >
-                  {backupBusy ? t("mouse.mappingApplying") : t("mouse.mappingApply")}
-                </button>
-              </div>
-            </Notice>
-          ) : null}
           {backupSaved ? <p className="panel__muted help-sm" role="status">{t("mouse.backupSaved")}</p> : null}
           {mappingApplied ? <p className="panel__muted help-sm" role="status">{t("mouse.mappingApplied")}</p> : null}
         </section>
