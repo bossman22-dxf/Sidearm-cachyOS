@@ -178,3 +178,8 @@ feature report declared on interface 00. Do not infer a direct numeric mapping
 between the HID report IDs/usages and Sidearm's onboard button IDs. Further physical
 button tests should log the exact physical position pressed alongside the emitted
 event or raw report.
+
+
+## Related protocol reference
+
+The original Windows upstream implementation and its source-linked Naga V2 HyperSpeed protocol trace are documented separately in [`windows-upstream-protocol-trace.md`](windows-upstream-protocol-trace.md). That note distinguishes the Windows vendor feature-report path on `MI_00` from the consumer-signal input path on `MI_01&Col03`, and keeps source-derived vendor IDs separate from the Linux input observations recorded here.
