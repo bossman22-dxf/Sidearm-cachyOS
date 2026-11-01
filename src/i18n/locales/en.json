@@ -1305,6 +1305,8 @@
     "backupSaved": "Backup saved. Keep this file somewhere safe; it can be used for recovery.",
     "backupIncomplete": "The backup file was saved, but some mouse records or the device mode could not be read. No mapping changes were made.",
     "mappingButton": "Back up and set up Naga buttons",
+    "mappingReviewTitle": "Review Naga button setup",
+    "mappingBackupLocation": "Backup saved to: {{path}}",
     "mappingTitle": "Change the Naga's onboard buttons?",
     "mappingConfirm": "The backup has been saved. Applying this will set only top auxiliary button 1 to Mouse Button 4 (Back) and top auxiliary button 2 to Mouse Button 5 (Forward), on both layers. Every other button record will be left unchanged. The mouse will be in normal onboard mode after the change.",
     "mappingApply": "Apply mapping",
