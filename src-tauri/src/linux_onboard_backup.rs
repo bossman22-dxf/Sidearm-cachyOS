@@ -20,9 +20,14 @@ use std::{
 const VID: u16 = 0x1532;
 const PID: u16 = 0x00b4;
 const INTERFACE: i32 = 0;
-const REPORT_ID: u8 = 0x03;
+const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
+const USAGE_MOUSE: u16 = 0x02;
+const REPORT_ID: u8 = 0x00;
+const NAGA_BUTTON_IDS: [u8; 21] = [
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
+    0x0b, 0x0c, 0x01, 0x02, 0x03, 0x09, 0x0a, 0x34, 0x35,
+];
 const PAYLOAD_LEN: usize = 90;
-const COMMAND_STATUS_NEW: u8 = 0x00;
 const COMMAND_STATUS_BUSY: u8 = 0x01;
 const COMMAND_STATUS_OK: u8 = 0x02;
 const COMMAND_STATUS_NO_RESPONSE: u8 = 0x04;
@@ -33,6 +38,7 @@ const CLASS_POWER: u8 = 0x07;
 const CMD_GET_POLL_RATE: u8 = 0x85;
 const CMD_SET_POLL_RATE: u8 = 0x05;
 const CMD_GET_BUTTON: u8 = 0x8c;
+const CMD_GET_BUTTON_IDS: u8 = 0x84;
 const CMD_GET_DPI: u8 = 0x85;
 const NOSTORE: u8 = 0x00;
 const VARSTORE: u8 = 0x01;
@@ -42,8 +48,8 @@ const CMD_SET_MODE: u8 = 0x04;
 const MODE_NORMAL: u8 = 0x00;
 const MODE_CONFIRM_ATTEMPTS: u32 = 4;
 const CMD_GET_BATTERY: u8 = 0x80;
-const RESPONSE_POLL_ATTEMPTS: usize = 40;
-const SETTLE: Duration = Duration::from_millis(50);
+const RESPONSE_POLL_ATTEMPTS: usize = 20;
+const SETTLE: Duration = Duration::from_millis(35);
 const RESPONSE_POLL_WAIT: Duration = Duration::from_millis(25);
 
 /// Serializes the report SET/GET exchange across all backup requests.
@@ -65,18 +71,45 @@ pub struct LinuxOnboardDevice {
     _exclusive: MutexGuard<'static, ()>,
 }
 
-fn is_target_hid_interface(interface_number: i32) -> bool {
+fn is_target_hid_collection(interface_number: i32, usage_page: u16, usage: u16) -> bool {
     interface_number == INTERFACE
+        && usage_page == USAGE_PAGE_GENERIC_DESKTOP
+        && usage == USAGE_MOUSE
 }
 
-/// A matching feature report can still be pending: 0x00 is "new command"
-/// and 0x01 is "busy". Both require another GET_REPORT, not another SET_REPORT.
+/// The receiver reports status 0x01 while a command is still being processed.
+/// Poll GET_REPORT for that same command; never resend SET_REPORT while busy.
 fn response_is_pending(status: u8) -> bool {
-    matches!(status, COMMAND_STATUS_NEW | COMMAND_STATUS_BUSY)
+    status == COMMAND_STATUS_BUSY
+}
+
+/// Reject malformed frames before considering whether they belong to this request.
+fn validate_response_frame(reply: &[u8; PAYLOAD_LEN]) -> Result<(), String> {
+    if reply[88] != checksum(reply) {
+        return Err("mouse returned an invalid HID response checksum".into());
+    }
+    if reply[2] != 0 || reply[3] != 0 || reply[4] != 0 || reply[89] != 0 {
+        return Err("mouse returned an invalid HID response header".into());
+    }
+    if reply[5] > 80 {
+        return Err(format!("mouse returned an invalid HID response length {}", reply[5]));
+    }
+    if !matches!(reply[0], 0x01..=0x05) {
+        return Err(format!("mouse returned an invalid HID response status {:#04x}", reply[0]));
+    }
+    Ok(())
 }
 
 fn reply_matches(request: &[u8; PAYLOAD_LEN], reply: &[u8; PAYLOAD_LEN]) -> bool {
-    reply[1] == request[1] && reply[6..8] == request[6..8]
+    if reply[1] != request[1] || reply[6..8] != request[6..8] {
+        return false;
+    }
+    // Button reads share a command header. Confirm the bank and button too.
+    // Reply byte 10 is not checked: it is metadata, not a layer echo.
+    !(reply[0] == COMMAND_STATUS_OK
+        && request[6] == CLASS_BUTTON
+        && request[7] == CMD_GET_BUTTON
+        && (reply[8] != request[8] || reply[9] != request[9]))
 }
 
 /// Poll the reply to one already-sent command. The command is never resent while
@@ -114,12 +147,21 @@ where
             header
         ));
 
+        validate_response_frame(&reply)?;
         if reply_matches(request, &reply) {
             match reply[0] {
-                COMMAND_STATUS_OK => return Ok(reply),
+                COMMAND_STATUS_OK => {
+                    if reply[5] != request[5] {
+                        return Err(format!(
+                            "HID query {class:#04x}/{command:#04x} returned {} bytes of arguments; expected {}",
+                            reply[5], request[5]
+                        ));
+                    }
+                    return Ok(reply);
+                }
                 status if response_is_pending(status) => {}
                 COMMAND_STATUS_NO_RESPONSE => {
-                    return Err("mouse did not respond (asleep or out of range)".into());
+                    return Err("Mouse timeout. Move it to wake it up.".into());
                 }
                 0x03 => {
                     return Err(format!("HID query {class:#04x}/{command:#04x} was rejected (status 0x03)"));
@@ -187,17 +229,12 @@ impl LinuxOnboardDevice {
             .device_list()
             .filter(|d| d.vendor_id() == VID && d.product_id() == PID)
             .collect();
-        // The Windows implementation opens the vendor feature-report collection
-        // by interface path, not by the Generic Desktop/Mouse top-level usage.
-        // HIDAPI exposes each top-level collection separately, and the mouse
-        // collection can echo an uncompleted report while the vendor collection
-        // carries the actual command response. Probe every collection on the
-        // model's interface using GET_MODE, which is read-only, and keep only the
-        // handle that returns a completed, matching command.
+        // OpenNaga's independently verified transport selects the USB mouse
+        // collection (Usage Page 1, Usage 2) on interface zero, with report ID 0.
         let candidates: Vec<_> = matching_devices
             .iter()
             .copied()
-            .filter(|d| is_target_hid_interface(d.interface_number()))
+            .filter(|d| is_target_hid_collection(d.interface_number(), d.usage_page(), d.usage()))
             .collect();
         if candidates.is_empty() {
             let found = matching_devices
@@ -238,18 +275,12 @@ impl LinuxOnboardDevice {
                 _exclusive: exclusive,
             };
 
-            // The Windows HID API uses report ID 0x03 for this model. On Linux,
-            // hidraw exposes the descriptor's numbered/unnumbered report layout
-            // directly; try the unnumbered form as a read-only compatibility
-            // fallback in case the receiver's Linux HID descriptor expects ID 0.
-            for report_id in [REPORT_ID, 0x00] {
-                candidate.report_id = report_id;
-                match candidate.command(CLASS_CONTROL, CMD_GET_MODE, &[0x00, 0x00]) {
-                    Ok(_) => return Ok(candidate),
-                    Err(error) => failures.push(format!(
-                        "{description} report-id {report_id:#04x}: {error}"
-                    )),
-                }
+            candidate.report_id = REPORT_ID;
+            match candidate.command(CLASS_CONTROL, CMD_GET_MODE, &[0x00, 0x00]) {
+                Ok(_) => return Ok(candidate),
+                Err(error) => failures.push(format!(
+                    "{description} report-id {REPORT_ID:#04x}: {error}"
+                )),
             }
         }
 
@@ -379,11 +410,41 @@ impl LinuxOnboardDevice {
     }
 
     fn raw_button_record(&self, button_id: u8, layer: u8) -> Result<[u8; 10], String> {
-        let args = [0x01, button_id, layer, 0, 0, 0, 0, 0, 0, 0];
+        self.raw_button_record_from(0x01, button_id, layer)
+    }
+
+    fn raw_button_record_from(&self, profile: u8, button_id: u8, layer: u8) -> Result<[u8; 10], String> {
+        if profile > 1 || layer > 1 {
+            return Err("only the active/stored profile banks and two button layers are supported".into());
+        }
+        let args = [profile, button_id, layer, 0, 0, 0, 0, 0, 0, 0];
         let reply = self.command(CLASS_BUTTON, CMD_GET_BUTTON, &args)?;
         let mut record = [0u8; 10];
         record.copy_from_slice(&reply[8..18]);
+        if record[0] != profile || record[1] != button_id {
+            return Err(format!("mouse returned profile/button {:#04x}/{:#04x} while {profile:#04x}/{button_id:#04x} was requested", record[0], record[1]));
+        }
+        // Reply byte 2 is receiver metadata, not an echo of the requested layer.
+        record[2] = 0;
         Ok(record)
+    }
+
+    fn verify_active_mirror(&self, records: &[RawButtonRecord]) -> Result<(), String> {
+        for record in records {
+            let actual = self.raw_button_record_from(0x00, record.button_id, record.layer)?;
+            let mut expected = record.bytes;
+            expected[0] = 0x00;
+            expected[2] = 0x00;
+            if actual != expected {
+                return Err(format!("button {:#04x} layer {} did not match the active onboard profile after writing", record.button_id, record.layer));
+            }
+        }
+        Ok(())
+    }
+
+    fn button_ids(&self) -> Result<BTreeSet<u8>, String> {
+        let reply = self.command(CLASS_BUTTON, CMD_GET_BUTTON_IDS, &[0; 22])?;
+        decode_button_ids(&reply)
     }
 
     fn battery_percent(&self) -> Result<u8, String> {
@@ -413,30 +474,27 @@ impl LinuxOnboardDevice {
     }
 
     fn write_raw_record(&self, record: &RawButtonRecord) -> Result<(), String> {
-        if record.layer > 1
-            || record.bytes[0] != 0x01
-            || record.bytes[1] != record.button_id
-            || record.bytes[2] != record.layer
+        if record.layer > 1 || record.bytes[0] != 0x01
+            || record.bytes[1] != record.button_id || record.bytes[2] > 1
             || usize::from(record.bytes[4]) > 5
         {
             return Err(format!("backup contains an invalid raw record for button {:#04x} layer {}", record.button_id, record.layer));
         }
-        self.command(CLASS_BUTTON, 0x0c, &record.bytes)?;
+        // Persist normalized bytes, setting the requested layer only in the SET.
+        let expected = normalize_binding_bytes(record.bytes);
+        let mut wire = expected;
+        wire[2] = record.layer;
+        self.command(CLASS_BUTTON, 0x0c, &wire)?;
         let readback = self.raw_button_record(record.button_id, record.layer)?;
-        if readback != record.bytes {
+        if readback != expected {
             return Err(format!("button {:#04x} layer {} did not read back byte-for-byte after restore", record.button_id, record.layer));
         }
         Ok(())
     }
 
     pub fn create_backup(&self) -> Result<OnboardBackup, String> {
-        let mut ids = BTreeSet::new();
-        // These are the complete, hardware-scanned set of addressable records
-        // for this model: 14 key controls and seven native mouse controls.
-        for id in [0x40u8, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x0b, 0x0c,
-                   0x01, 0x02, 0x03, 0x09, 0x0a, 0x34, 0x35] {
-            ids.insert(id);
-        }
+        // Read the receiver's actual button table and refuse unknown layouts.
+        let ids = self.button_ids()?;
 
         let mode_before = self.mode().ok();
         let mut records = Vec::new();
@@ -508,7 +566,7 @@ fn validate_restore_payload(payload: &SnapshotPayload) -> Result<(), String> {
         if record.layer > 1
             || record.bytes[0] != 0x01
             || record.bytes[1] != record.button_id
-            || record.bytes[2] != record.layer
+            || record.bytes[2] > 1
             || record.bytes[4] > 5
         {
             return Err("refusing to restore: backup contains an invalid raw record".into());
@@ -547,10 +605,14 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
         .ok_or_else(|| "backup is missing its original device mode".to_string())?;
 
     let device = LinuxOnboardDevice::open()?;
+    device.button_ids()?;
     device.ensure_normal_mode()?;
-    for record in &payload.records {
+    let mut ordered: Vec<_> = payload.records.iter().collect();
+    ordered.sort_by_key(|record| std::cmp::Reverse(record.layer));
+    for record in ordered {
         device.write_raw_record(record)?;
     }
+    device.verify_active_mirror(&payload.records)?;
     device.set_mode(saved_mode)?;
     Ok(())
 }
@@ -593,6 +655,7 @@ fn sidearm_mapping_records(
                 .find(|record| record.button_id == button_id && record.layer == layer)
                 .cloned()
                 .ok_or_else(|| format!("backup is missing {control_id} ({button_id:#04x}) layer {layer}"))?;
+            record.bytes = normalize_binding_bytes(record.bytes);
 
             // Hypershift-specific assignments win when present. Otherwise the
             // Default standard action is copied to layer 1, preventing stale
@@ -640,6 +703,7 @@ fn sidearm_mapping_records(
     if records.len() != 42 {
         return Err(format!("expected 42 Default-profile records, built {}", records.len()));
     }
+    records.sort_by_key(|record| std::cmp::Reverse(record.layer));
     Ok(records)
 }
 
@@ -712,12 +776,15 @@ fn sidearm_swap_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord
                 .ok_or_else(|| format!("backup is missing wheel-tilt control {tilt_id:#04x} layer {layer}"))?;
             let mut new_top = top.clone();
             let mut new_tilt = tilt.clone();
+            new_top.bytes = normalize_binding_bytes(new_top.bytes);
+            new_tilt.bytes = normalize_binding_bytes(new_tilt.bytes);
             new_top.bytes[3..10].copy_from_slice(&tilt.bytes[3..10]);
             new_tilt.bytes[3..10].copy_from_slice(&top.bytes[3..10]);
             records.push(new_top);
             records.push(new_tilt);
         }
     }
+    records.sort_by_key(|record| std::cmp::Reverse(record.layer));
     Ok(records)
 }
 
@@ -732,15 +799,17 @@ where
     validate_restore_payload(payload)?;
     let saved_mode = payload.device_mode.ok_or_else(|| "backup is missing its original device mode".to_string())?;
     let device = LinuxOnboardDevice::open()?;
+    device.button_ids()?;
     if device.mode()? != saved_mode {
         return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
     }
     for original in &payload.records {
-        if device.raw_button_record(original.button_id, original.layer)? != original.bytes {
+        if device.raw_button_record(original.button_id, original.layer)? != normalize_binding_bytes(original.bytes) {
             return Err(format!("button {:#04x} layer {} changed since this backup was created; no mapping was written", original.button_id, original.layer));
         }
     }
-    let mappings = build(payload)?;
+    let mut mappings = build(payload)?;
+    mappings.sort_by_key(|record| std::cmp::Reverse(record.layer));
     let originals: Vec<&RawButtonRecord> = mappings.iter().map(|mapping| {
         payload.records.iter().find(|r| r.button_id == mapping.button_id && r.layer == mapping.layer)
             .ok_or_else(|| format!("backup is missing original button {:#04x} layer {}", mapping.button_id, mapping.layer))
@@ -760,8 +829,13 @@ where
         attempted.push(original);
         if let Err(error) = device.write_raw_record(mapping) {
             let mut rollback_errors = Vec::new();
-            for record in attempted.iter().rev() {
+            let mut rollback_records: Vec<RawButtonRecord> = attempted.iter().map(|record| (*record).clone()).collect();
+            rollback_records.sort_by_key(|record| std::cmp::Reverse(record.layer));
+            for record in &rollback_records {
                 if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
+            }
+            if rollback_errors.is_empty() {
+                if let Err(e) = device.verify_active_mirror(&rollback_records) { rollback_errors.push(e); }
             }
             if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
             if rollback_errors.is_empty() {
@@ -770,6 +844,7 @@ where
             return Err(format!("mapping failed: {error}; rollback also had {} error(s): {}", rollback_errors.len(), rollback_errors.join("; ")));
         }
     }
+    device.verify_active_mirror(&mappings)?;
     Ok(())
 }
 
@@ -841,6 +916,32 @@ pub fn backup_connected_mouse(path: &Path) -> Result<bool, String> {
     Ok(complete)
 }
 
+fn normalize_binding_bytes(mut bytes: [u8; 10]) -> [u8; 10] {
+    bytes[2] = 0;
+    bytes
+}
+
+fn decode_button_ids(reply: &[u8; PAYLOAD_LEN]) -> Result<BTreeSet<u8>, String> {
+    if reply[5] != 22 {
+        return Err(format!("mouse returned a {}-byte button list; expected 22", reply[5]));
+    }
+    let count = usize::from(reply[8]);
+    if count == 0 || count >= 22 {
+        return Err(format!("mouse returned an invalid button count {count}"));
+    }
+    let mut ids = BTreeSet::new();
+    for button_id in &reply[9..9 + count] {
+        if *button_id == 0 || !ids.insert(*button_id) {
+            return Err("mouse returned a button list containing zero or duplicate IDs".into());
+        }
+    }
+    let expected: BTreeSet<u8> = NAGA_BUTTON_IDS.into_iter().collect();
+    if ids != expected {
+        return Err(format!("mouse button layout differs from the supported 21-control Naga layout (received {} IDs)", ids.len()));
+    }
+    Ok(ids)
+}
+
 fn checksum(payload: &[u8; PAYLOAD_LEN]) -> u8 {
     payload[2..88].iter().fold(0, |acc, byte| acc ^ byte)
 }
@@ -865,7 +966,7 @@ mod tests {
             (0..=1).map(move |layer| RawButtonRecord {
                 button_id,
                 layer,
-                bytes: [0x01, button_id, layer, 0x02, 0x02, 0x00, 0x68, 0, 0, 0],
+                bytes: [0x01, button_id, 0x00, 0x02, 0x02, 0x00, 0x68, 0, 0, 0],
             })
         }).collect();
         SnapshotPayload {
@@ -1015,8 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn new_and_busy_statuses_require_more_get_report_reads() {
-        assert!(response_is_pending(COMMAND_STATUS_NEW));
+    fn only_busy_status_requires_an_additional_get_report() {
         assert!(response_is_pending(COMMAND_STATUS_BUSY));
         for status in [COMMAND_STATUS_OK, 0x03, COMMAND_STATUS_NO_RESPONSE, 0x05] {
             assert!(!response_is_pending(status), "status {status:#04x} is final");
@@ -1041,10 +1141,9 @@ mod tests {
     }
 
     #[test]
-    fn response_reader_polls_new_and_busy_without_resending_command() {
+    fn response_reader_polls_busy_without_resending_command() {
         let request = battery_request();
         let mut responses = std::collections::VecDeque::from([
-            response_for(&request, COMMAND_STATUS_NEW),
             response_for(&request, COMMAND_STATUS_BUSY),
             response_for(&request, COMMAND_STATUS_OK),
         ]);
@@ -1060,8 +1159,8 @@ mod tests {
         )
         .expect("pending responses should complete");
         assert_eq!(reply[0], COMMAND_STATUS_OK);
-        assert_eq!(reads, 3, "one SET is followed by three GET_REPORT reads");
-        assert_eq!(pauses, [RESPONSE_POLL_WAIT, RESPONSE_POLL_WAIT]);
+        assert_eq!(reads, 2, "one SET is followed by GET_REPORT polling");
+        assert_eq!(pauses, [RESPONSE_POLL_WAIT]);
     }
 
     #[test]
@@ -1122,11 +1221,11 @@ mod tests {
     }
 
     #[test]
-    fn target_hid_collection_is_the_mouse_application_on_interface_zero() {
-        assert!(is_target_hid_interface(0));
-        assert!(is_target_hid_interface(0));
-        assert!(!is_target_hid_interface(1));
-        assert!(is_target_hid_interface(0));
+    fn target_hid_collection_matches_open_naga_usage_and_interface() {
+        assert!(is_target_hid_collection(0, 0x01, 0x02));
+        assert!(!is_target_hid_collection(1, 0x01, 0x02));
+        assert!(!is_target_hid_collection(0, 0xff00, 0x02));
+        assert!(!is_target_hid_collection(0, 0x01, 0x01));
     }
 
     #[test]
@@ -1136,5 +1235,52 @@ mod tests {
         let unique: BTreeSet<u8> = ids.into_iter().collect();
         assert_eq!(unique.len(), 21);
         assert_eq!(unique.len() * 2, 42);
+    }
+
+    #[test]
+    fn button_id_decoder_requires_the_verified_21_control_layout() {
+        let mut reply = [0u8; PAYLOAD_LEN];
+        reply[5] = 22;
+        reply[8] = 21;
+        reply[9..30].copy_from_slice(&NAGA_BUTTON_IDS);
+        assert_eq!(decode_button_ids(&reply).unwrap().len(), 21);
+        reply[29] = 0x7f;
+        assert!(decode_button_ids(&reply).is_err());
+    }
+
+    #[test]
+    fn layer_address_is_separate_from_normalized_binding_bytes() {
+        let stored = [0x01, 0x40, 0x00, 0x02, 0x02, 0, 0x1e, 0, 0, 0];
+        let expected = normalize_binding_bytes(stored);
+        let mut wire = expected;
+        wire[2] = 1;
+        assert_eq!(expected[2], 0);
+        assert_eq!(wire[2], 1);
+    }
+
+    #[test]
+    fn restore_validation_accepts_legacy_layer_reply_metadata() {
+        let mut payload = complete_payload();
+        for record in &mut payload.records {
+            if record.layer == 1 { record.bytes[2] = 1; }
+        }
+        assert!(validate_restore_payload(&payload).is_ok());
+    }
+
+    #[test]
+    fn reply_match_rejects_stale_button_id_and_profile() {
+        let mut request = [0u8; PAYLOAD_LEN];
+        request[1] = 0x1f;
+        request[5] = 10;
+        request[6] = CLASS_BUTTON;
+        request[7] = CMD_GET_BUTTON;
+        request[8..18].copy_from_slice(&[1, 0x40, 1, 0, 0, 0, 0, 0, 0, 0]);
+        let mut reply = response_for(&request, COMMAND_STATUS_OK);
+        assert!(reply_matches(&request, &reply));
+        reply[9] = 0x41;
+        assert!(!reply_matches(&request, &reply));
+        reply[9] = 0x40;
+        reply[8] = 0;
+        assert!(!reply_matches(&request, &reply));
     }
 }
