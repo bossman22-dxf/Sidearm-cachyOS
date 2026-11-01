@@ -280,6 +280,9 @@ pub struct Settings {
     /// in older defaults. Once applied, users may freely re-enable them.
     #[serde(default)]
     pub builtin_app_rules_defaults_applied: bool,
+    /// One-time migration marker for the stock Razer Naga button layout.
+    #[serde(default)]
+    pub naga_default_layout_applied: bool,
 }
 
 /// `Settings.offline_profile_id` value for "the profile in effect at exit".
@@ -991,6 +994,102 @@ fn migrate_builtin_app_rules(config: &mut AppConfig) {
     config.settings.builtin_app_rules_defaults_applied = true;
 }
 
+/// Upgrade an untouched legacy fallback profile to the standard Razer Naga
+/// layout. If the user changed any of the old seeded thumb assignments, leave
+/// their profile alone rather than overwriting personal customizations.
+fn migrate_naga_default_layout(config: &mut AppConfig) {
+    if config.settings.naga_default_layout_applied {
+        return;
+    }
+
+    let legacy_thumb_labels = [
+        ("thumb_01", "Copy"),
+        ("thumb_02", "Paste"),
+        ("thumb_03", "Find"),
+        ("thumb_04", "Undo"),
+        ("thumb_05", "Save"),
+        ("thumb_06", "Close tab"),
+    ];
+    let is_untouched_legacy_default = legacy_thumb_labels.iter().all(|(control_id, label)| {
+        config.bindings.iter().any(|binding| {
+            binding.profile_id == "default"
+                && binding.layer == Layer::Standard
+                && binding.control_id.as_str() == *control_id
+                && binding.label == *label
+        })
+    });
+
+    if is_untouched_legacy_default {
+        let seeded_bindings = seed_bindings();
+        let seeded_actions = seed_actions();
+        let target_controls = [
+            "thumb_01", "thumb_02", "thumb_03", "thumb_04", "thumb_05", "thumb_06",
+            "thumb_07", "thumb_08", "thumb_09", "thumb_10", "thumb_11", "thumb_12",
+            "top_aux_01", "top_aux_02", "wheel_click", "mouse_4", "mouse_5",
+        ];
+
+        for control_id in target_controls {
+            let Some(seed_binding) = seeded_bindings.iter().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id.as_str() == control_id
+            }) else {
+                continue;
+            };
+
+            let existing = config.bindings.iter_mut().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id.as_str() == control_id
+            });
+            let should_update = match existing {
+                Some(binding) => {
+                    let old_label = match control_id {
+                        "thumb_01" => Some("Copy"),
+                        "thumb_02" => Some("Paste"),
+                        "thumb_03" => Some("Find"),
+                        "thumb_04" => Some("Undo"),
+                        "thumb_05" => Some("Save"),
+                        "thumb_06" => Some("Close tab"),
+                        "mouse_4" => Some("Wheel Tilt Left"),
+                        "mouse_5" => Some("Wheel Tilt Right"),
+                        _ => None,
+                    };
+                    if old_label.is_some_and(|label| binding.label == label) {
+                        binding.label = seed_binding.label.clone();
+                        binding.action_id = seed_binding.action_id.clone();
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => {
+                    config.bindings.push(seed_binding.clone());
+                    true
+                }
+            };
+
+            if should_update {
+                if let Some(seed_action) = seeded_actions.iter().find(|action| action.id == seed_binding.action_id) {
+                    if let Some(existing_action) = config.actions.iter_mut().find(|action| action.id == seed_action.id) {
+                        *existing_action = seed_action.clone();
+                    } else {
+                        config.actions.push(seed_action.clone());
+                    }
+                }
+            }
+        }
+
+        // The right button must remain an ordinary right-click, not a
+        // Hypershift modifier, in the stock mouse profile.
+        if config.settings.hypershift_trigger == "mouse_right" {
+            config.settings.hypershift_trigger = "none".into();
+        }
+    }
+
+    config.settings.naga_default_layout_applied = true;
+}
+
 /// Migrate legacy clipboardPaste to sendText (avoids COM/OLE crashes).
 fn migrate_paste_mode(config: &mut AppConfig) {
     for action in &mut config.actions {
@@ -1110,6 +1209,7 @@ fn load_and_validate(
     let mut config = read_config_from_path(config_path)?;
     migrate_devices(&mut config);
     migrate_builtin_app_rules(&mut config);
+    migrate_naga_default_layout(&mut config);
     migrate_paste_mode(&mut config);
     let warnings = validate_config(&config)?;
     config.compile_title_regexes();
@@ -1247,6 +1347,7 @@ pub fn read_and_migrate_config_file(config_path: &Path) -> Result<AppConfig, Con
     let mut config = read_config_from_path(config_path)?;
     migrate_devices(&mut config);
     migrate_builtin_app_rules(&mut config);
+    migrate_naga_default_layout(&mut config);
     migrate_paste_mode(&mut config);
     config.compile_title_regexes();
     Ok(config)
@@ -2001,6 +2102,7 @@ pub(crate) fn default_seed_config() -> AppConfig {
             show_battery_in_tray: false,
             offline_profile_id: None,
             builtin_app_rules_defaults_applied: true,
+            naga_default_layout_applied: true,
         },
         profiles: seed_profiles(),
         devices: vec![builtin_naga_device()],
