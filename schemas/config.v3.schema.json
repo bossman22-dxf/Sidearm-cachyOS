@@ -270,8 +270,8 @@
             "mouse_4",
             "mouse_5"
           ],
-          "default": "mouse_right",
-          "description": "Physical control acting as the software Hypershift modifier while held: presses during the hold resolve through the 'hypershift' layer and the left mouse button produces a right click. 'none' disables Hypershift. Only buttons the mouse still reports as native mouse buttons work (a button remapped into a keystroke by the onboard memory never reaches the mouse hook)."
+          "default": "none",
+          "description": "Physical control acting as the software Hypershift modifier while held. 'none' disables Hypershift; disabled by default so right-click remains a normal right-click."
         },
         "showBatteryInTray": {
           "type": "boolean"
