@@ -161,9 +161,10 @@ where
                 }
                 status if response_is_pending(status) => {}
                 COMMAND_STATUS_NO_RESPONSE => {
-                    let target = if class == CLASS_BUTTON && command == CMD_GET_BUTTON && request[5] >= 3 {
-                        format!(" (stored bank {}, button {:#04x}, layer {})", request[8], request[9], request[10])
-                    } else if class == CLASS_BUTTON && command == 0x0c && request[5] >= 3 {
+                    let target = if class == CLASS_BUTTON
+                        && request[5] >= 3
+                        && (command == CMD_GET_BUTTON || command == 0x0c)
+                    {
                         format!(" (stored bank {}, button {:#04x}, layer {})", request[8], request[9], request[10])
                     } else if class == CLASS_BUTTON && command == CMD_GET_BUTTON_IDS {
                         " (reading the onboard button inventory)".to_string()
@@ -1060,7 +1061,10 @@ pub fn backup_connected_mouse(path: &Path) -> Result<bool, String> {
     let device = LinuxOnboardDevice::open()?;
     let backup = device.create_backup()?;
     let complete = backup.payload.scan_complete;
-    backup.save_new(path).map_err(|e| e.to_string())?;
+    // The caller uses a Save dialog that has already asked the user before
+    // returning an existing destination. Honour that explicit choice and
+    // replace the old file atomically so the UI can continue to its review step.
+    backup.save_replace(path).map_err(|e| e.to_string())?;
     Ok(complete)
 }
 
