@@ -565,7 +565,7 @@ fn sidearm_mapping_records(
     payload: &SnapshotPayload,
     config: &crate::config::AppConfig,
 ) -> Result<Vec<RawButtonRecord>, String> {
-    use crate::config::{ActionPayload, ActionType, Layer, MouseActionKind};
+    use crate::config::Layer;
 
     let profile = config.profiles.iter()
         .find(|profile| profile.id == "default")
