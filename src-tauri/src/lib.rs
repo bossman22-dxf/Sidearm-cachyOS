@@ -2981,11 +2981,11 @@ async fn set_mouse_poll_rate(hz: u16) -> Result<linux_onboard_backup::LinuxMouse
 }
 
 #[tauri::command]
-async fn apply_naga_standard_mapping(path: String) -> Result<(), CommandError> {
+async fn apply_naga_standard_mapping(path: String, bindings: Vec<mouse_memory::OnboardBinding>) -> Result<(), CommandError> {
     #[cfg(target_os = "linux")]
     {
         tauri::async_runtime::spawn_blocking(move || {
-            linux_onboard_backup::apply_sidearm_mapping(std::path::Path::new(&path))
+            linux_onboard_backup::apply_sidearm_mapping(std::path::Path::new(&path), &bindings)
                 .map_err(|message| CommandError::new("onboard_mapping_failed", message, None))
         })
         .await
@@ -2993,7 +2993,7 @@ async fn apply_naga_standard_mapping(path: String) -> Result<(), CommandError> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = path;
+        let _ = (path, bindings);
         Err(CommandError::internal("Native onboard mapping is not available on this platform."))
     }
 }
