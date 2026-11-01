@@ -860,13 +860,10 @@ where
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
-    let saved_mode = payload.device_mode
-        .ok_or_else(|| "backup is missing its original device mode".to_string())?;
-
     let device = LinuxOnboardDevice::open()?;
     let button_ids = device.button_ids()?;
-    if device.mode()? != saved_mode {
-        return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
+    if device.mode()? != MODE_NORMAL {
+        return Err("Turn off driver mode before saving to the mouse.".into());
     }
 
     let mut current_records = Vec::with_capacity(42);
@@ -900,17 +897,6 @@ where
             ))
     }).collect::<Result<_, _>>()?;
 
-    let original_mode = match device.ensure_normal_mode() {
-        Ok(mode) => mode,
-        Err(error) => {
-            let rollback = device.set_mode(saved_mode);
-            return match rollback {
-                Ok(()) => Err(format!("could not switch to normal onboard mode; original mode restored: {error}")),
-                Err(e) => Err(format!("could not switch to normal onboard mode: {error}; original mode rollback failed: {e}")),
-            };
-        }
-    };
-
     let mut failure = None;
     for mapping in &mappings {
         if let Err(error) = device.write_raw_record(mapping) {
@@ -940,7 +926,6 @@ where
         {
             rollback_errors.push(e);
         }
-        if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
         if rollback_errors.is_empty() {
             return Err(format!("mapping failed and the original live onboard records were restored: {error}"));
         }
