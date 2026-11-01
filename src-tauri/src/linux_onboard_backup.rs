@@ -10,7 +10,7 @@ use crate::onboard_backup::{
 };
 use hidapi::{HidApi, HidDevice};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{atomic::{AtomicU64, Ordering}, Mutex, MutexGuard},
     thread,
@@ -621,8 +621,8 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 ///
 /// Sidearm's profile resolver uses configured action bindings, while the mouse
 /// can store only a small set of native keyboard/mouse actions. We map those
-/// actions directly and preserve captured native records for controls with no
-/// Default-profile binding (left/right click and wheel up/down).
+/// actions directly and preserve the freshly-read onboard assignments for
+/// controls with no Default-profile binding (left/right click and wheel up/down).
 fn sidearm_mapping_records(
     payload: &SnapshotPayload,
     config: &crate::config::AppConfig,
@@ -705,6 +705,66 @@ fn sidearm_mapping_records(
     }
     records.sort_by_key(|record| std::cmp::Reverse(record.layer));
     Ok(records)
+}
+
+/// Select only records whose normalized function bytes differ from the live onboard
+/// snapshot. A changed Hypershift assignment also schedules that control's
+/// standard-layer record: on this receiver the normal-layer SET clears the
+/// layer-status flag left by a Hypershift SET, even when the standard mapping
+/// itself is unchanged. This mirrors OpenNaga's write ordering.
+fn changed_mapping_records(
+    current: &[RawButtonRecord],
+    targets: &[RawButtonRecord],
+) -> Result<Vec<RawButtonRecord>, String> {
+    let mut current_by_address = BTreeMap::new();
+    for record in current {
+        let address = (record.button_id, record.layer);
+        if record.layer > 1 || current_by_address.insert(address, record).is_some() {
+            return Err("live onboard snapshot contains duplicate or invalid button/layer records".into());
+        }
+    }
+
+    let mut target_by_address = BTreeMap::new();
+    for record in targets {
+        let address = (record.button_id, record.layer);
+        if record.layer > 1 || target_by_address.insert(address, record).is_some() {
+            return Err("Default profile contains duplicate or invalid button/layer records".into());
+        }
+        if !current_by_address.contains_key(&address) {
+            return Err(format!(
+                "live onboard snapshot is missing button {:#04x} layer {}",
+                record.button_id, record.layer
+            ));
+        }
+    }
+
+    let hypershift_changed: BTreeSet<u8> = targets.iter()
+        .filter(|target| target.layer == 1
+            && current_by_address.get(&(target.button_id, target.layer))
+                .is_some_and(|before| before.bytes != target.bytes))
+        .map(|target| target.button_id)
+        .collect();
+
+    let mut changed: Vec<RawButtonRecord> = targets.iter()
+        .filter(|target| {
+            target.layer == 1
+                && current_by_address.get(&(target.button_id, target.layer))
+                    .is_some_and(|before| before.bytes != target.bytes)
+        })
+        .cloned()
+        .collect();
+
+    changed.extend(targets.iter().filter(|target| {
+        target.layer == 0
+            && (hypershift_changed.contains(&target.button_id)
+                || current_by_address.get(&(target.button_id, target.layer))
+                    .is_some_and(|before| before.bytes != target.bytes))
+    }).cloned());
+
+    // SET layer 1 first; the corresponding layer 0 write follows to clear the
+    // receiver's layer-status flag.
+    changed.sort_by_key(|record| std::cmp::Reverse(record.layer));
+    Ok(changed)
 }
 
 /// Seven action bytes stored after the profile/button/layer address in GET/SET_BUTTON.
@@ -794,26 +854,52 @@ fn apply_mapping_records<F>(path: &Path, build: F) -> Result<(), String>
 where
     F: FnOnce(&SnapshotPayload) -> Result<Vec<RawButtonRecord>, String>,
 {
+    // The backup remains the recovery point and supplies the device/mode
+    // identity, but it is no longer used as the mapping baseline. Compare the
+    // requested profile with what is actually stored in the mouse right now.
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
-    let saved_mode = payload.device_mode.ok_or_else(|| "backup is missing its original device mode".to_string())?;
+    let saved_mode = payload.device_mode
+        .ok_or_else(|| "backup is missing its original device mode".to_string())?;
+
     let device = LinuxOnboardDevice::open()?;
     device.button_ids()?;
     if device.mode()? != saved_mode {
         return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
     }
-    for original in &payload.records {
-        if device.raw_button_record(original.button_id, original.layer)? != normalize_binding_bytes(original.bytes) {
-            return Err(format!("button {:#04x} layer {} changed since this backup was created; no mapping was written", original.button_id, original.layer));
+
+    let mut current_records = Vec::with_capacity(42);
+    for button_id in device.button_ids()? {
+        for layer in 0..=1 {
+            current_records.push(RawButtonRecord {
+                button_id,
+                layer,
+                bytes: device.raw_button_record(button_id, layer)?,
+            });
         }
     }
-    let mut mappings = build(payload)?;
-    mappings.sort_by_key(|record| std::cmp::Reverse(record.layer));
+
+    // Build the target from the current Default profile. Unassigned controls
+    // retain their current native assignment; explicit Default bindings are
+    // authoritative and replace any differing onboard assignment.
+    let mut current_payload = payload.clone();
+    current_payload.records = current_records.clone();
+    let mut targets = build(&current_payload)?;
+    targets.sort_by_key(|record| std::cmp::Reverse(record.layer));
+    let mappings = changed_mapping_records(&current_records, &targets)?;
+
+    let current_by_address: BTreeMap<(u8, u8), &RawButtonRecord> = current_records.iter()
+        .map(|record| ((record.button_id, record.layer), record))
+        .collect();
     let originals: Vec<&RawButtonRecord> = mappings.iter().map(|mapping| {
-        payload.records.iter().find(|r| r.button_id == mapping.button_id && r.layer == mapping.layer)
-            .ok_or_else(|| format!("backup is missing original button {:#04x} layer {}", mapping.button_id, mapping.layer))
+        current_by_address.get(&(mapping.button_id, mapping.layer)).copied()
+            .ok_or_else(|| format!(
+                "live onboard snapshot is missing original button {:#04x} layer {}",
+                mapping.button_id, mapping.layer
+            ))
     }).collect::<Result<_, _>>()?;
+
     let original_mode = match device.ensure_normal_mode() {
         Ok(mode) => mode,
         Err(error) => {
@@ -824,38 +910,44 @@ where
             };
         }
     };
-    let mut attempted: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
+
     let mut failure = None;
-    for (mapping, original) in mappings.iter().zip(originals.iter()) {
-        attempted.push(original);
+    for mapping in &mappings {
         if let Err(error) = device.write_raw_record(mapping) {
             failure = Some(error);
             break;
         }
     }
     if failure.is_none() {
-        failure = device.verify_active_mirror(&mappings).err();
+        // Verify every requested target, not just the records that needed a
+        // SET. This also confirms the unchanged parts of the active mirror.
+        failure = device.verify_active_mirror(&targets).err();
     }
+
     if let Some(error) = failure {
         let mut rollback_errors = Vec::new();
+        // Include the write that may have timed out after the receiver applied
+        // it, plus the standard-layer cleanup record paired with any changed
+        // Hypershift write. Rewriting the live snapshot is safe and idempotent.
         let mut rollback_records: Vec<RawButtonRecord> =
-            attempted.iter().map(|record| (*record).clone()).collect();
+            originals.iter().map(|record| (*record).clone()).collect();
         rollback_records.sort_by_key(|record| std::cmp::Reverse(record.layer));
         for record in &rollback_records {
             if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
         }
         if rollback_errors.is_empty()
-            && let Err(e) = device.verify_active_mirror(&rollback_records)
+            && let Err(e) = device.verify_active_mirror(&current_records)
         {
             rollback_errors.push(e);
         }
         if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
         if rollback_errors.is_empty() {
-            return Err(format!("mapping failed and the original target records were restored: {error}"));
+            return Err(format!("mapping failed and the original live onboard records were restored: {error}"));
         }
         return Err(format!("mapping failed: {error}; rollback also had {} error(s): {}",
             rollback_errors.len(), rollback_errors.join("; ")));
     }
+
     Ok(())
 }
 
@@ -1053,6 +1145,48 @@ mod tests {
         action.payload = crate::config::ActionPayload::Disabled(crate::config::DisabledActionPayload {});
         let error = sidearm_mapping_records(&payload, &config).unwrap_err();
         assert!(error.contains("cannot be stored in onboard memory"));
+    }
+
+    #[test]
+    fn mapping_diff_skips_unchanged_records_and_schedules_layer_cleanup() {
+        let payload = complete_payload();
+        let current = payload.records.clone();
+        let mut targets = current.clone();
+
+        // A standard-only change produces one SET.
+        let standard = targets.iter_mut()
+            .find(|record| record.button_id == 0x41 && record.layer == 0)
+            .unwrap();
+        standard.bytes[6] ^= 0x01;
+
+        // A Hypershift change produces its SET plus a standard-layer SET for
+        // the same button, even though that standard binding is unchanged.
+        let hypershift = targets.iter_mut()
+            .find(|record| record.button_id == 0x40 && record.layer == 1)
+            .unwrap();
+        hypershift.bytes[6] ^= 0x01;
+
+        let changed = changed_mapping_records(&current, &targets).unwrap();
+        assert_eq!(changed.len(), 3);
+        assert_eq!((changed[0].button_id, changed[0].layer), (0x40, 1));
+        assert_eq!((changed[1].button_id, changed[1].layer), (0x41, 0));
+        assert_eq!((changed[2].button_id, changed[2].layer), (0x40, 0));
+    }
+
+    #[test]
+    fn mapping_diff_returns_empty_when_default_profile_matches_live_memory() {
+        let payload = complete_payload();
+        let changed = changed_mapping_records(&payload.records, &payload.records).unwrap();
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn mapping_diff_rejects_duplicate_target_addresses() {
+        let payload = complete_payload();
+        let mut targets = vec![payload.records[0].clone()];
+        targets.push(payload.records[0].clone());
+        let error = changed_mapping_records(&payload.records, &targets).unwrap_err();
+        assert!(error.contains("duplicate"));
     }
 
     #[test]
