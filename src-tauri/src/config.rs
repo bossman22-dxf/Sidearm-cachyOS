@@ -4793,14 +4793,14 @@ mod edge_proptests {
         assert_eq!(s.modifier_stale_gc_ms, None);
     }
 
-    /// The Hypershift trigger defaults to the right mouse button (the Synapse
-    /// assignment this device shipped with) so an older config keeps Hypershift.
+    /// The Hypershift trigger defaults to none so right-click remains a normal
+    /// right-click unless the user explicitly assigns it as the trigger.
     #[test]
-    fn settings_hypershift_trigger_defaults_to_mouse_right() {
+    fn settings_hypershift_trigger_defaults_to_none() {
         let json = r#"{"fallbackProfileId":"p","theme":"t","startWithWindows":false,
             "minimizeToTray":false,"debugLogging":false}"#;
         let s: Settings = serde_json::from_str(json).expect("parse");
-        assert_eq!(s.hypershift_trigger, "mouse_right");
+        assert_eq!(s.hypershift_trigger, "none");
     }
 
     /// Only the native mouse buttons (and `none`) are accepted as triggers —
