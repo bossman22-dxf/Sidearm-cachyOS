@@ -2102,7 +2102,6 @@ pub(crate) fn default_seed_config() -> AppConfig {
             show_battery_in_tray: false,
             offline_profile_id: None,
             builtin_app_rules_defaults_applied: true,
-                naga_default_layout_applied: false,
             naga_default_layout_applied: true,
         },
         profiles: seed_profiles(),
