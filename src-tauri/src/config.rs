@@ -2981,10 +2981,13 @@ fn seed_actions() -> Vec<Action> {
         ));
     }
 
-    // Native Naga top auxiliary buttons become standard browser Back/Forward.
+    // Native Naga top auxiliary buttons become browser Back/Forward. The
+    // wheel-click control is captured as a vendor key by the device encoder,
+    // so replay it as a real middle click for normal mouse-wheel behaviour.
     for (control, display_name, action) in [
         (ControlId::new("top_aux_01"), "Back", MouseActionKind::MouseBack),
         (ControlId::new("top_aux_02"), "Forward", MouseActionKind::MouseForward),
+        (ControlId::new("wheel_click"), "Middle Click", MouseActionKind::MiddleClick),
     ] {
         actions.push(Action {
             id: action_id("default", Layer::Standard, &control),
@@ -3046,6 +3049,7 @@ fn seed_bindings() -> Vec<Binding> {
         ("default", Layer::Standard, ControlId::new("thumb_12"), "="),
         ("default", Layer::Standard, ControlId::new("top_aux_01"), "Back"),
         ("default", Layer::Standard, ControlId::new("top_aux_02"), "Forward"),
+        ("default", Layer::Standard, ControlId::new("wheel_click"), "Middle Click"),
         ("default", Layer::Standard, ControlId::new("mouse_4"), "Scroll Left"),
         ("default", Layer::Standard, ControlId::new("mouse_5"), "Scroll Right"),
         ("main", Layer::Standard, ControlId::new("thumb_01"), "Delete"),
@@ -3442,10 +3446,13 @@ mod tests {
     }
 
     #[test]
-    fn naga_wheel_tilt_defaults_to_horizontal_scroll() {
+    fn naga_default_mouse_controls_match_standard_mouse_behaviour() {
         let config = default_seed_config();
 
         for (control_id, expected_action) in [
+            (ControlId::new("top_aux_01"), MouseActionKind::MouseBack),
+            (ControlId::new("top_aux_02"), MouseActionKind::MouseForward),
+            (ControlId::new("wheel_click"), MouseActionKind::MiddleClick),
             (ControlId::new("mouse_4"), MouseActionKind::ScrollLeft),
             (ControlId::new("mouse_5"), MouseActionKind::ScrollRight),
         ] {
@@ -3469,6 +3476,37 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn naga_default_thumb_buttons_emit_number_row_keys() {
+        let config = default_seed_config();
+        for (index, expected_key) in [
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=",
+        ].iter().enumerate() {
+            let control_id = ControlId::new(format!("thumb_{:02}", index + 1));
+            let binding = config.bindings.iter().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id == control_id
+                    && binding.enabled
+            }).expect("every thumb button should have an enabled default binding");
+            let action = config.actions.iter().find(|action| action.id == binding.action_id)
+                .expect("thumb binding should resolve to an action");
+            assert_eq!(action.action_type, ActionType::Shortcut);
+            match &action.payload {
+                ActionPayload::Shortcut(payload) => {
+                    assert_eq!(payload.key, *expected_key);
+                    assert!(!payload.ctrl && !payload.shift && !payload.alt && !payload.win);
+                }
+                _ => panic!("thumb button should emit a plain key"),
+            }
+        }
+    }
+
+    #[test]
+    fn default_hypershift_does_not_consume_right_click() {
+        assert_eq!(default_hypershift_trigger(), "none");
     }
 
     #[test]
