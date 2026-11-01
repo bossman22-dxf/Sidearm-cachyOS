@@ -125,8 +125,8 @@ export async function createOnboardBackup(): Promise<{ path: string; complete: b
 }
 
 /** Apply the Naga's fixed Sidearm mapping after a complete backup and user confirmation. */
-export async function applyNagaStandardMapping(path: string, bindings: OnboardBinding[]): Promise<void> {
-  return invoke<void>("apply_naga_standard_mapping", { path, bindings });
+export async function applyNagaStandardMapping(path: string): Promise<void> {
+  return invoke<void>("apply_naga_standard_mapping", { path });
 }
 
 /** Read-only text dump of the connected mouse for a "help verify" issue (~20 s). */
