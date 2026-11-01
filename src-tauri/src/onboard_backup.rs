@@ -132,15 +132,13 @@ impl OnboardBackup {
         Ok(())
     }
 
-    /// Validate and write without replacing an existing file. The temporary
-    /// file is created in the destination directory so persist is same-volume.
-    pub fn save_new(&self, path: &Path) -> Result<(), BackupError> {
+    /// Build and durably write a private temporary backup in the destination
+    /// directory. Keeping it on the same filesystem allows the final rename
+    /// to be atomic.
+    fn write_temp(&self, path: &Path) -> Result<NamedTempFile, BackupError> {
         self.validate()?;
         let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         fs::create_dir_all(parent)?;
-        if path.exists() {
-            return Err(BackupError::AlreadyExists);
-        }
         let mut temp = NamedTempFile::new_in(parent)?;
         #[cfg(unix)]
         {
@@ -150,11 +148,29 @@ impl OnboardBackup {
         serde_json::to_writer_pretty(&mut temp, self)?;
         temp.write_all(b"\n")?;
         temp.as_file().sync_all()?;
+        Ok(temp)
+    }
+
+    /// Save a new backup without replacing an existing file.
+    /// Use this when the caller has not explicitly offered overwrite semantics.
+    pub fn save_new(&self, path: &Path) -> Result<(), BackupError> {
+        let temp = self.write_temp(path)?;
         match temp.persist_noclobber(path) {
             Ok(_) => Ok(()),
             Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => Err(BackupError::AlreadyExists),
             Err(error) => Err(BackupError::Io(error.error)),
         }
+    }
+
+    /// Atomically replace the selected backup file.
+    ///
+    /// This is intended for the explicit Save dialog flow: the dialog asks the
+    /// user to confirm replacing an existing file before returning its path.
+    /// On Unix, NamedTempFile::persist uses rename semantics, replacing the
+    /// destination atomically rather than truncating the old backup in place.
+    pub fn save_replace(&self, path: &Path) -> Result<(), BackupError> {
+        let temp = self.write_temp(path)?;
+        temp.persist(path).map(|_| ()).map_err(|error| BackupError::Io(error.error))
     }
 
     pub fn load_and_validate(path: &Path) -> Result<Self, BackupError> {
@@ -209,6 +225,20 @@ mod tests {
         assert_eq!(loaded, backup);
         assert!(!loaded.payload.scan_complete);
         assert_eq!(loaded.payload.records[0].bytes, [1,2,3,4,5,6,7,8,9,10]);
+    }
+
+    #[test]
+    fn save_replace_overwrites_existing_backup_with_a_valid_file() {
+        let backup = OnboardBackup::new(sample()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.json");
+        fs::write(&path, b"old backup contents").unwrap();
+
+        backup.save_replace(&path).unwrap();
+
+        let loaded = OnboardBackup::load_and_validate(&path).unwrap();
+        assert_eq!(loaded, backup);
+        assert_ne!(fs::read(&path).unwrap(), b"old backup contents");
     }
 
     #[test]
