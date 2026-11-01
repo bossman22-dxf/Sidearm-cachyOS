@@ -266,7 +266,7 @@ export function MouseWorkspace({
               <Notice variant="warning">
                 <p>{t(swapping ? "mouse.swapConfirm" : "mouse.mappingConfirm")}</p>
                 <p className="panel__muted help-sm">
-                  {t("mouse.mappingBackupLocation", { path: mappingBackupPath })}
+                  {t("mouse.mappingBackupLocation", { path: reviewPath })}
                 </p>
               </Notice>
               {error ? (
