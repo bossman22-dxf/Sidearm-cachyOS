@@ -2999,6 +2999,24 @@ async fn apply_naga_standard_mapping(path: String) -> Result<(), CommandError> {
 }
 
 #[tauri::command]
+async fn swap_naga_auxiliary_and_tilt_directions(path: String) -> Result<(), CommandError> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            linux_onboard_backup::swap_auxiliary_and_tilt_directions(std::path::Path::new(&path))
+                .map_err(|message| CommandError::new("onboard_mapping_failed", message, None))
+        })
+        .await
+        .map_err(|e| CommandError::internal(format!("onboard swap task failed: {e}")))?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(CommandError::internal("Native onboard mapping is not available on this platform."))
+    }
+}
+
+#[tauri::command]
 async fn create_onboard_backup(path: String) -> Result<bool, CommandError> {
     #[cfg(target_os = "linux")]
     {
@@ -3890,6 +3908,7 @@ pub fn run() {
             onboard_backup_supported,
             create_onboard_backup,
             apply_naga_standard_mapping,
+            swap_naga_auxiliary_and_tilt_directions,
             load_config,
             save_config,
             get_app_paths,
