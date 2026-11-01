@@ -52,8 +52,8 @@ fn main() -> ExitCode {
             }
             "--apply-sidearm-mapping" => {
                 println!("EXPERIMENTAL: this Linux mapping has not yet been validated on the physical mouse.");
-                println!("This switches the mouse to normal onboard mode, sets the twelve thumb buttons to F13-F24, and keeps M4/M5 as mouse buttons 4 and 5.");
-                println!("A fresh, complete matching backup is required; if a write fails, Sidearm will attempt record and mode rollback.");
+                println!("This applies Sidearm's built-in Default profile to all 21 Naga controls and both onboard layers.");
+                println!("A fresh, complete matching backup is required. Unsupported profile actions are rejected before writing; each record is read back and write failures trigger rollback.");
                 println!("Type APPLY to continue:");
                 print!("> ");
                 if io::stdout().flush().is_err() {
@@ -67,7 +67,7 @@ fn main() -> ExitCode {
                     eprintln!("Mapping cancelled.");
                     return ExitCode::from(2);
                 }
-                match sidearm_lib::linux_onboard_backup::apply_sidearm_mapping(path) {
+                match sidearm_lib::linux_onboard_backup::apply_default_profile_mapping(path) {
                     Ok(()) => {
                         println!("Sidearm mapping applied and every written record was verified.");
                         ExitCode::SUCCESS

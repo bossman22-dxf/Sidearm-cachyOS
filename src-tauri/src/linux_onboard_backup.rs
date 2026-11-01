@@ -778,6 +778,16 @@ pub fn apply_sidearm_mapping(path: &Path, config: &crate::config::AppConfig) -> 
     apply_mapping_records(path, |payload| sidearm_mapping_records(payload, config))
 }
 
+
+/// Apply Sidearm's shipped Default profile from the recovery utility.
+///
+/// The standalone recovery binary intentionally uses the built-in seed config:
+/// it has no app handle from which to resolve the user's config directory.
+pub fn apply_default_profile_mapping(path: &Path) -> Result<(), String> {
+    let config = crate::config::default_seed_config();
+    apply_sidearm_mapping(path, &config)
+}
+
 /// Swap the top auxiliary and wheel-tilt actions on both layers. Writes exactly
 /// eight records (four physical controls across two layers).
 pub fn swap_auxiliary_and_tilt_directions(path: &Path) -> Result<(), String> {
