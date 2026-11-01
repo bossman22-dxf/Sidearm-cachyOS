@@ -59,13 +59,6 @@ pub struct LinuxMouseSettings {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LinuxOnboardBinding {
-    pub control_id: String,
-    pub encoded_key: String,
-}
-
 pub struct LinuxOnboardDevice {
     device: HidDevice,
     report_id: u8,
@@ -562,66 +555,39 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn sidearm_mapping_records(
-    payload: &SnapshotPayload,
-    bindings: &[LinuxOnboardBinding],
-) -> Result<Vec<RawButtonRecord>, String> {
-    // The UI supplies the selected Live profile's standard-layer encoder
-    // bindings (thumb 1-12 and the two top auxiliary buttons). Resolve every
-    // requested control before touching the device; never silently skip one.
-    let expected: BTreeSet<&str> = [
-        "thumb_01", "thumb_02", "thumb_03", "thumb_04", "thumb_05", "thumb_06",
-        "thumb_07", "thumb_08", "thumb_09", "thumb_10", "thumb_11", "thumb_12",
-        "top_aux_01", "top_aux_02",
-    ].into_iter().collect();
-    let mut seen = BTreeSet::new();
-    let mut records = Vec::with_capacity(expected.len());
-
-    for binding in bindings {
-        if !expected.contains(binding.control_id.as_str()) {
-            return Err(format!("{} is not an onboard key control for this mouse", binding.control_id));
+fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
+    let mut records = Vec::with_capacity(4);
+    // Change only the two top auxiliary controls: Mouse Button 4 (Back)
+    // and Mouse Button 5 (Forward). Both layers are set so Hypershift cannot
+    // expose the old DPI-stage actions. Every thumb and wheel-tilt record is
+    // deliberately omitted and remains byte-for-byte as found in the backup.
+    for (button_id, mouse_button) in [(0x0b, 4), (0x0c, 5)] {
+        for layer in 0..=1 {
+            let mut record = payload
+                .records
+                .iter()
+                .find(|record| record.button_id == button_id && record.layer == layer)
+                .cloned()
+                .ok_or_else(|| format!("backup is missing top button {button_id:#04x} layer {layer}"))?;
+            record.bytes[3] = 0x01; // plain mouse-button category
+            record.bytes[4] = 0x01; // one-byte mouse-button value
+            record.bytes[5] = mouse_button;
+            record.bytes[6] = 0x00; // clear the unused second value byte
+            records.push(record);
         }
-        if !seen.insert(binding.control_id.as_str()) {
-            return Err(format!("profile contains duplicate onboard mapping for {}", binding.control_id));
-        }
-        let button_id = crate::device_catalog::NAGA_V2_HYPERSPEED.button_id_for(&binding.control_id)
-            .ok_or_else(|| format!("{} has no onboard key record", binding.control_id))?;
-        let spec = crate::hotkeys::parse_hotkey(&binding.encoded_key)?;
-        let number = spec.key.display_name.strip_prefix('F')
-            .and_then(|value| value.parse::<u8>().ok())
-            .filter(|value| (13..=24).contains(value))
-            .ok_or_else(|| format!("{} cannot live in onboard memory; only F13-F24 encoder keys are supported", spec.key.display_name))?;
-        let modifier = u8::from(spec.modifiers.ctrl)
-            | (u8::from(spec.modifiers.shift) << 5)
-            | (u8::from(spec.modifiers.alt) << 6)
-            | (u8::from(spec.modifiers.win) << 3);
-        let encoded = [0x02, 0x02, modifier, 0x68 + (number - 13)];
-        let mut record = payload.records.iter()
-            .find(|record| record.button_id == button_id && record.layer == 0)
-            .cloned()
-            .ok_or_else(|| format!("backup is missing {} (button {button_id:#04x})", binding.control_id))?;
-        // Preserve the address header, replace the complete key action payload,
-        // and clear unused value bytes so no part of the old action survives.
-        record.bytes[3..].fill(0);
-        record.bytes[3..7].copy_from_slice(&encoded);
-        records.push(record);
     }
 
-    if seen != expected {
-        let missing = expected.difference(&seen).copied().collect::<Vec<_>>().join(", ");
-        return Err(format!("Live profile is missing onboard mappings for: {missing}"));
-    }
     Ok(records)
 }
 
-/// Apply the selected Live profile's standard-layer encoder mapping after a
-/// complete backup and explicit user confirmation. Every requested key control
-/// is written and read back; failure rolls back every attempted record.
-pub fn apply_sidearm_mapping(path: &Path, bindings: &[LinuxOnboardBinding]) -> Result<(), String> {
+/// Apply the fixed Sidearm convention only when the backup still matches the
+/// connected mouse. A failed write restores only attempted top-button records and the original mode.
+pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
-    let saved_mode = payload.device_mode
+    let saved_mode = payload
+        .device_mode
         .ok_or_else(|| "backup is missing its original device mode".to_string())?;
 
     let device = LinuxOnboardDevice::open()?;
@@ -639,16 +605,27 @@ pub fn apply_sidearm_mapping(path: &Path, bindings: &[LinuxOnboardBinding]) -> R
         }
     }
 
-    // Resolve the complete write list and all originals before the first write.
-    let mappings = sidearm_mapping_records(payload, bindings)?;
-    let originals: Vec<&RawButtonRecord> = mappings.iter().map(|mapping| {
-        payload.records.iter().find(|record|
-            record.button_id == mapping.button_id && record.layer == mapping.layer
-        ).ok_or_else(|| format!(
-            "backup is missing original button {:#04x} layer {}",
-            mapping.button_id, mapping.layer
-        ))
-    }).collect::<Result<_, _>>()?;
+    // Resolve both the new values and their exact originals before changing
+    // mode or touching the device. The write list contains only four records:
+    // the two top auxiliary buttons on the standard and Hypershift layers.
+    let mappings = sidearm_mapping_records(payload)?;
+    let original_mappings: Vec<&RawButtonRecord> = mappings
+        .iter()
+        .map(|mapping| {
+            payload
+                .records
+                .iter()
+                .find(|record| {
+                    record.button_id == mapping.button_id && record.layer == mapping.layer
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "backup is missing original button {:#04x} layer {}",
+                        mapping.button_id, mapping.layer
+                    )
+                })
+        })
+        .collect::<Result<_, _>>()?;
 
     let original_mode = match device.ensure_normal_mode() {
         Ok(mode) => mode,
@@ -661,12 +638,14 @@ pub fn apply_sidearm_mapping(path: &Path, bindings: &[LinuxOnboardBinding]) -> R
         }
     };
 
-    let mut attempted: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
-    for (mapping, original) in mappings.iter().zip(originals.iter()) {
-        attempted.push(original);
+    // Roll back only records this operation actually attempted. Never rewrite
+    // the thumb-button or other unrelated records, even during recovery.
+    let mut attempted_originals: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
+    for (mapping, original) in mappings.iter().zip(original_mappings.iter()) {
+        attempted_originals.push(original);
         if let Err(error) = device.write_raw_record(mapping) {
             let mut rollback_errors = Vec::new();
-            for original in attempted.iter().rev() {
+            for original in attempted_originals.iter().rev() {
                 if let Err(rollback) = device.write_raw_record(original) {
                     rollback_errors.push(rollback);
                 }
@@ -675,11 +654,12 @@ pub fn apply_sidearm_mapping(path: &Path, bindings: &[LinuxOnboardBinding]) -> R
                 rollback_errors.push(rollback);
             }
             if rollback_errors.is_empty() {
-                return Err(format!("mapping failed and all attempted profile records were restored: {error}"));
+                return Err(format!("mapping failed and the original top-button records were restored: {error}"));
             }
             return Err(format!(
                 "mapping failed: {error}; rollback also had {} error(s): {}",
-                rollback_errors.len(), rollback_errors.join("; ")
+                rollback_errors.len(),
+                rollback_errors.join("; ")
             ));
         }
     }
@@ -781,56 +761,38 @@ mod tests {
     }
 
     #[test]
-    fn profile_mapping_writes_all_fourteen_key_controls_from_live_encoder_bindings() {
+    fn sidearm_mapping_sets_top_aux_buttons_to_back_and_forward() {
         let mut payload = complete_payload();
         for (index, record) in payload.records.iter_mut().enumerate() {
             record.bytes[7] = index as u8;
             record.bytes[8] = 0xaa;
             record.bytes[9] = 0xbb;
         }
-        let bindings = (1..=12).map(|number| LinuxOnboardBinding {
-            control_id: format!("thumb_{number:02}"),
-            encoded_key: format!("F{}", number + 12),
-        }).chain([
-            LinuxOnboardBinding { control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into() },
-            LinuxOnboardBinding { control_id: "top_aux_02".into(), encoded_key: "Alt+F24".into() },
-        ]).collect::<Vec<_>>();
-
-        let records = sidearm_mapping_records(&payload, &bindings).unwrap();
-        assert_eq!(records.len(), 14);
-        let expected_ids: BTreeSet<u8> = [
-            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46,
-            0x47, 0x48, 0x49, 0x4a, 0x4b, 0x0b, 0x0c,
-        ].into_iter().collect();
-        assert_eq!(records.iter().map(|record| record.button_id).collect::<BTreeSet<_>>(), expected_ids);
+        let records = sidearm_mapping_records(&payload).unwrap();
+        assert_eq!(records.len(), 4);
+        // Top auxiliary 1 is Mouse Button 4 (Back), on both layers.
+        assert_eq!((records[0].button_id, records[0].layer), (0x0b, 0));
+        assert_eq!(&records[0].bytes[3..7], &[1, 1, 4, 0]);
+        assert_eq!((records[1].button_id, records[1].layer), (0x0b, 1));
+        assert_eq!(&records[1].bytes[3..7], &[1, 1, 4, 0]);
+        // Top auxiliary 2 is Mouse Button 5 (Forward), on both layers.
+        assert_eq!((records[2].button_id, records[2].layer), (0x0c, 0));
+        assert_eq!(&records[2].bytes[3..7], &[1, 1, 5, 0]);
+        assert_eq!((records[3].button_id, records[3].layer), (0x0c, 1));
+        assert_eq!(&records[3].bytes[3..7], &[1, 1, 5, 0]);
+        // The four top-button records change only their action bytes. Every
+        // other byte of each record (and every non-target record) is untouched.
         for record in &records {
-            assert_eq!(record.layer, 0, "only standard-layer onboard records are written");
-            assert_eq!(record.bytes[3], 0x02, "every profile encoder is a key record");
-            assert_eq!(record.bytes[4], 0x02, "key record contains modifier and HID usage");
+            let original = payload.records.iter()
+                .find(|item| item.button_id == record.button_id && item.layer == record.layer)
+                .unwrap();
+            let mouse_button = if record.button_id == 0x0b { 4 } else { 5 };
+            let mut expected = original.bytes;
+            expected[3..7].copy_from_slice(&[0x01, 0x01, mouse_button, 0x00]);
+            assert_eq!(record.bytes, expected);
         }
-        // Every non-target record, including native mouse and wheel controls,
-        // is absent from the write list and remains untouched.
-        assert!(payload.records.iter()
-            .filter(|record| !expected_ids.contains(&record.button_id))
-            .all(|record| !records.iter().any(|written|
-                written.button_id == record.button_id && written.layer == record.layer)));
-    }
-
-    #[test]
-    fn profile_mapping_rejects_missing_or_duplicate_encoder_bindings() {
-        let payload = complete_payload();
-        let mut bindings = (1..=12).map(|number| LinuxOnboardBinding {
-            control_id: format!("thumb_{number:02}"),
-            encoded_key: format!("F{}", number + 12),
-        }).collect::<Vec<_>>();
-        bindings.push(LinuxOnboardBinding {
-            control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into(),
-        });
-        assert!(sidearm_mapping_records(&payload, &bindings).unwrap_err().contains("top_aux_02"));
-        bindings.push(LinuxOnboardBinding {
-            control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into(),
-        });
-        assert!(sidearm_mapping_records(&payload, &bindings).unwrap_err().contains("duplicate"));
+        assert!(payload.records.iter().filter(|record| ![0x0b, 0x0c].contains(&record.button_id))
+            .all(|record| !records.iter().any(|written| written.button_id == record.button_id && written.layer == record.layer)));
     }
 
     #[test]
