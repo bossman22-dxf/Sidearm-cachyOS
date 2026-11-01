@@ -398,10 +398,10 @@ pub const HYPER_TRIGGER_CONTROLS: [&str; 5] = [
     "mouse_5",
 ];
 
-/// Default Hypershift trigger: the right mouse button, matching the Synapse
-/// assignment this device shipped with (see the `mouse_right` control note).
+/// Default Hypershift trigger is disabled so right-click remains a normal
+/// right-click in the stock Razer Naga profile.
 pub fn default_hypershift_trigger() -> String {
-    "mouse_right".to_owned()
+    "none".to_owned()
 }
 
 /// A physical input device (mouse, macropad, …) whose controls appear in
