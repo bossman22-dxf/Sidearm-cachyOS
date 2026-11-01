@@ -129,6 +129,11 @@ export async function applyNagaStandardMapping(path: string): Promise<void> {
   return invoke<void>("apply_naga_standard_mapping", { path });
 }
 
+/** Swap only the top auxiliary and wheel-tilt onboard actions, after a fresh backup. */
+export async function swapNagaAuxiliaryAndTiltDirections(path: string): Promise<void> {
+  return invoke<void>("swap_naga_auxiliary_and_tilt_directions", { path });
+}
+
 /** Read-only text dump of the connected mouse for a "help verify" issue (~20 s). */
 export async function getDeviceReport(): Promise<string> {
   return invoke<string>("get_device_report");
