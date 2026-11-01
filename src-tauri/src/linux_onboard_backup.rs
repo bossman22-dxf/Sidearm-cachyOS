@@ -864,13 +864,13 @@ where
         .ok_or_else(|| "backup is missing its original device mode".to_string())?;
 
     let device = LinuxOnboardDevice::open()?;
-    device.button_ids()?;
+    let button_ids = device.button_ids()?;
     if device.mode()? != saved_mode {
         return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
     }
 
     let mut current_records = Vec::with_capacity(42);
-    for button_id in device.button_ids()? {
+    for button_id in button_ids {
         for layer in 0..=1 {
             current_records.push(RawButtonRecord {
                 button_id,
@@ -1166,11 +1166,12 @@ mod tests {
             .unwrap();
         hypershift.bytes[6] ^= 0x01;
 
+        targets.sort_by_key(|record| std::cmp::Reverse(record.layer));
         let changed = changed_mapping_records(&current, &targets).unwrap();
         assert_eq!(changed.len(), 3);
         assert_eq!((changed[0].button_id, changed[0].layer), (0x40, 1));
-        assert_eq!((changed[1].button_id, changed[1].layer), (0x41, 0));
-        assert_eq!((changed[2].button_id, changed[2].layer), (0x40, 0));
+        assert_eq!((changed[1].button_id, changed[1].layer), (0x40, 0));
+        assert_eq!((changed[2].button_id, changed[2].layer), (0x41, 0));
     }
 
     #[test]
