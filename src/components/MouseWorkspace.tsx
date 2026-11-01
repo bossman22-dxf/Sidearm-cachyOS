@@ -164,6 +164,9 @@ export function MouseWorkspace({
       }
       setMappingBackupPath(backup.path);
       setError(null);
+      // One click performs the complete backup-then-apply operation.
+      await applyNagaStandardMapping(backup.path);
+      setMappingApplied(true);
     } catch (unknownError) {
       setError(normalizeCommandError(unknownError).message);
     } finally {
@@ -493,7 +496,7 @@ export function MouseWorkspace({
                 onClick={() => void prepareSidearmMapping()}
                 disabled={backupBusy}
               >
-                {t("mouse.mappingButton")}
+                {backupBusy ? (mappingBackupPath ? t("mouse.mappingApplying") : t("mouse.backupBusy")) : t("mouse.mappingButton")}
               </button>
               <button
                 type="button"

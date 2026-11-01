@@ -555,29 +555,150 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
-    let mut records = Vec::with_capacity(4);
-    // Change only the two top auxiliary controls: Mouse Button 4 (Back)
-    // and Mouse Button 5 (Forward). Both layers are set so Hypershift cannot
-    // expose the old DPI-stage actions. Every thumb and wheel-tilt record is
-    // deliberately omitted and remains byte-for-byte as found in the backup.
-    for (button_id, mouse_button) in [(0x0b, 4), (0x0c, 5)] {
+/// Map the Default profile onto every addressable Naga record on both layers.
+///
+/// Sidearm's profile resolver uses configured action bindings, while the mouse
+/// can store only a small set of native keyboard/mouse actions. We map those
+/// actions directly and preserve captured native records for controls with no
+/// Default-profile binding (left/right click and wheel up/down).
+fn sidearm_mapping_records(
+    payload: &SnapshotPayload,
+    config: &crate::config::AppConfig,
+) -> Result<Vec<RawButtonRecord>, String> {
+    use crate::config::{ActionPayload, ActionType, Layer, MouseActionKind};
+
+    let profile = config.profiles.iter()
+        .find(|profile| profile.id == "default")
+        .ok_or_else(|| "config has no Default profile".to_string())?;
+    if !profile.enabled {
+        return Err("the Default profile is disabled; enable it before writing the mouse".into());
+    }
+
+    // All 21 hardware controls found in the complete Naga V2 scan.
+    const BUTTONS: [(u8, &str); 21] = [
+        (0x40, "thumb_01"), (0x41, "thumb_02"), (0x42, "thumb_03"),
+        (0x43, "thumb_04"), (0x44, "thumb_05"), (0x45, "thumb_06"),
+        (0x46, "thumb_07"), (0x47, "thumb_08"), (0x48, "thumb_09"),
+        (0x49, "thumb_10"), (0x4a, "thumb_11"), (0x4b, "thumb_12"),
+        (0x0b, "top_aux_01"), (0x0c, "top_aux_02"),
+        (0x01, "mouse_left"), (0x02, "mouse_right"), (0x03, "wheel_click"),
+        (0x09, "wheel_up"), (0x0a, "wheel_down"),
+        (0x34, "mouse_4"), (0x35, "mouse_5"),
+    ];
+
+    let mut records = Vec::with_capacity(42);
+    for (button_id, control_id) in BUTTONS {
         for layer in 0..=1 {
-            let mut record = payload
-                .records
-                .iter()
+            let mut record = payload.records.iter()
                 .find(|record| record.button_id == button_id && record.layer == layer)
                 .cloned()
-                .ok_or_else(|| format!("backup is missing top button {button_id:#04x} layer {layer}"))?;
-            record.bytes[3] = 0x01; // plain mouse-button category
-            record.bytes[4] = 0x01; // one-byte mouse-button value
-            record.bytes[5] = mouse_button;
-            record.bytes[6] = 0x00; // clear the unused second value byte
+                .ok_or_else(|| format!("backup is missing {control_id} ({button_id:#04x}) layer {layer}"))?;
+
+            // Hypershift-specific assignments win when present. Otherwise the
+            // Default standard action is copied to layer 1, preventing stale
+            // Synapse/Hypershift records from resurfacing on the mouse.
+            let target_layer = if layer == 0 { Layer::Standard } else { Layer::Hypershift };
+            let binding = config.bindings.iter().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == target_layer
+                    && binding.control_id.as_str() == control_id
+            }).or_else(|| {
+                if layer == 1 {
+                    config.bindings.iter().find(|binding| {
+                        binding.profile_id == "default"
+                            && binding.layer == Layer::Standard
+                            && binding.control_id.as_str() == control_id
+                    })
+                } else {
+                    None
+                }
+            });
+
+            if let Some(binding) = binding.filter(|binding| binding.enabled) {
+                if binding.trigger_mode.is_some()
+                    || binding.chord_partner.is_some()
+                    || binding.throttle_ms.is_some()
+                {
+                    return Err(format!(
+                        "Default binding for {control_id} uses a trigger, chord, or throttle that onboard memory cannot represent"
+                    ));
+                }
+                let action = config.actions.iter()
+                    .find(|action| action.id == binding.action_id)
+                    .ok_or_else(|| format!("Default binding for {control_id} references missing action {}", binding.action_id))?;
+                if !action.conditions.is_empty() {
+                    return Err(format!("Default action {} is conditional and cannot be stored onboard", action.display_name));
+                }
+                let bytes = default_action_bytes(action.action_type, &action.payload)
+                    .map_err(|error| format!("Default action {} for {control_id}: {error}", action.display_name))?;
+                record.bytes[3..10].copy_from_slice(&bytes);
+            }
             records.push(record);
         }
     }
 
+    if records.len() != 42 {
+        return Err(format!("expected 42 Default-profile records, built {}", records.len()));
+    }
     Ok(records)
+}
+
+/// Seven action bytes stored after the profile/button/layer address in GET/SET_BUTTON.
+fn default_action_bytes(
+    action_type: crate::config::ActionType,
+    payload: &crate::config::ActionPayload,
+) -> Result<[u8; 7], String> {
+    use crate::config::{ActionPayload, ActionType, MouseActionKind};
+
+    match (action_type, payload) {
+        (ActionType::Shortcut, ActionPayload::Shortcut(shortcut)) => {
+            let key = crate::hotkeys::parse_primary_key(&shortcut.key)?;
+            let usage = hid_usage_for_vk(key.code)
+                .ok_or_else(|| format!("key {} has no onboard HID usage", key.display_name))?;
+            let modifier = u8::from(shortcut.ctrl)
+                | (u8::from(shortcut.shift) << 5)
+                | (u8::from(shortcut.alt) << 6)
+                | (u8::from(shortcut.win) << 3);
+            Ok([0x02, 0x02, modifier, usage, 0, 0, 0])
+        }
+        (ActionType::MouseAction, ActionPayload::MouseAction(mouse)) => {
+            if mouse.ctrl || mouse.shift || mouse.alt || mouse.win {
+                return Err("modified mouse-button actions are not supported onboard".into());
+            }
+            let value = match mouse.action {
+                MouseActionKind::LeftClick => 1,
+                MouseActionKind::RightClick => 2,
+                MouseActionKind::MiddleClick => 3,
+                MouseActionKind::MouseBack | MouseActionKind::ScrollLeft => 4,
+                MouseActionKind::MouseForward | MouseActionKind::ScrollRight => 5,
+                _ => return Err(format!("mouse action {:?} cannot be stored onboard", mouse.action)),
+            };
+            Ok([0x01, 0x01, value, 0, 0, 0, 0])
+        }
+        _ => Err(format!("{} actions cannot be stored in onboard memory", action_type.as_str())),
+    }
+}
+
+/// USB HID keyboard-page usage corresponding to the parsed Windows virtual key.
+fn hid_usage_for_vk(vk: u16) -> Option<u8> {
+    let vk = vk as u8;
+    Some(match vk {
+        0x41..=0x5a => 0x04 + (vk - 0x41),
+        0x31..=0x39 => 0x1e + (vk - 0x31),
+        0x30 => 0x27,
+        0x70..=0x7b => 0x3a + (vk - 0x70),
+        0x7c..=0x87 => 0x68 + (vk - 0x7c),
+        0x0d => 0x28, 0x1b => 0x29, 0x08 => 0x2a, 0x09 => 0x2b,
+        0x20 => 0x2c, 0xbd => 0x2d, 0xbb => 0x2e,
+        0xdb => 0x2f, 0xdd => 0x30, 0xdc => 0x31,
+        0xba => 0x33, 0xde => 0x34, 0xc0 => 0x35,
+        0xbc => 0x36, 0xbe => 0x37, 0xbf => 0x38,
+        0x14 => 0x39, 0x2c => 0x46, 0x91 => 0x47, 0x13 => 0x48,
+        0x2d => 0x49, 0x24 => 0x4a, 0x21 => 0x4b, 0x2e => 0x4c,
+        0x23 => 0x4d, 0x22 => 0x4e, 0x27 => 0x4f, 0x25 => 0x50,
+        0x28 => 0x51, 0x26 => 0x52, 0x5d => 0x65,
+        _ => return None,
+    })
 }
 
 /// Build the optional four-control swap by exchanging action payloads.
@@ -602,7 +723,10 @@ fn sidearm_swap_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord
 
 /// Write a bounded set from an unchanged snapshot. Each write is read back;
 /// failures roll back only attempted targets. Success leaves normal onboard mode.
-fn apply_mapping_records(path: &Path, build: fn(&SnapshotPayload) -> Result<Vec<RawButtonRecord>, String>) -> Result<(), String> {
+fn apply_mapping_records<F>(path: &Path, build: F) -> Result<(), String>
+where
+    F: FnOnce(&SnapshotPayload) -> Result<Vec<RawButtonRecord>, String>,
+{
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
@@ -649,9 +773,9 @@ fn apply_mapping_records(path: &Path, build: fn(&SnapshotPayload) -> Result<Vec<
     Ok(())
 }
 
-/// Apply the fixed Sidearm convention to only the two top auxiliary controls.
-pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
-    apply_mapping_records(path, sidearm_mapping_records)
+/// Apply the Default profile to all 21 Naga controls and both onboard layers.
+pub fn apply_sidearm_mapping(path: &Path, config: &crate::config::AppConfig) -> Result<(), String> {
+    apply_mapping_records(path, |payload| sidearm_mapping_records(payload, config))
 }
 
 /// Swap the top auxiliary and wheel-tilt actions on both layers. Writes exactly
@@ -755,38 +879,56 @@ mod tests {
     }
 
     #[test]
-    fn sidearm_mapping_sets_top_aux_buttons_to_back_and_forward() {
-        let mut payload = complete_payload();
-        for (index, record) in payload.records.iter_mut().enumerate() {
-            record.bytes[7] = index as u8;
-            record.bytes[8] = 0xaa;
-            record.bytes[9] = 0xbb;
+    fn default_profile_mapping_writes_all_21_controls_on_both_layers() {
+        let payload = complete_payload();
+        let config = crate::config::default_seed_config();
+        let records = sidearm_mapping_records(&payload, &config).unwrap();
+        assert_eq!(records.len(), 42);
+        for button_id in [
+            0x40u8, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
+            0x0b, 0x0c, 0x01, 0x02, 0x03, 0x09, 0x0a, 0x34, 0x35,
+        ] {
+            for layer in 0..=1 {
+                assert!(records.iter().any(|record| record.button_id == button_id && record.layer == layer));
+            }
         }
-        let records = sidearm_mapping_records(&payload).unwrap();
-        assert_eq!(records.len(), 4);
-        // Top auxiliary 1 is Mouse Button 4 (Back), on both layers.
-        assert_eq!((records[0].button_id, records[0].layer), (0x0b, 0));
-        assert_eq!(&records[0].bytes[3..7], &[1, 1, 4, 0]);
-        assert_eq!((records[1].button_id, records[1].layer), (0x0b, 1));
-        assert_eq!(&records[1].bytes[3..7], &[1, 1, 4, 0]);
-        // Top auxiliary 2 is Mouse Button 5 (Forward), on both layers.
-        assert_eq!((records[2].button_id, records[2].layer), (0x0c, 0));
-        assert_eq!(&records[2].bytes[3..7], &[1, 1, 5, 0]);
-        assert_eq!((records[3].button_id, records[3].layer), (0x0c, 1));
-        assert_eq!(&records[3].bytes[3..7], &[1, 1, 5, 0]);
-        // The four top-button records change only their action bytes. Every
-        // other byte of each record (and every non-target record) is untouched.
-        for record in &records {
-            let original = payload.records.iter()
-                .find(|item| item.button_id == record.button_id && item.layer == record.layer)
-                .unwrap();
-            let mouse_button = if record.button_id == 0x0b { 4 } else { 5 };
-            let mut expected = original.bytes;
-            expected[3..7].copy_from_slice(&[0x01, 0x01, mouse_button, 0x00]);
-            assert_eq!(record.bytes, expected);
+
+        let record = |button_id, layer| records.iter()
+            .find(|record| record.button_id == button_id && record.layer == layer)
+            .unwrap();
+        // Default thumb 1 is keyboard "1", with the same action in both layers.
+        assert_eq!(&record(0x40, 0).bytes[3..7], &[0x02, 0x02, 0x00, 0x1e]);
+        assert_eq!(&record(0x40, 1).bytes[3..7], &[0x02, 0x02, 0x00, 0x1e]);
+        // Top Aux 1/2 are browser Back/Forward; wheel click stays middle click.
+        assert_eq!(&record(0x0b, 0).bytes[3..6], &[0x01, 0x01, 4]);
+        assert_eq!(&record(0x0c, 0).bytes[3..6], &[0x01, 0x01, 5]);
+        assert_eq!(&record(0x03, 0).bytes[3..6], &[0x01, 0x01, 3]);
+        // The default wheel-tilt actions remain mouse buttons 4/5.
+        assert_eq!(&record(0x34, 0).bytes[3..6], &[0x01, 0x01, 4]);
+        assert_eq!(&record(0x35, 0).bytes[3..6], &[0x01, 0x01, 5]);
+        // Left/right click and wheel up/down have no Default-profile assignment;
+        // their backup records are included in the full rewrite unchanged.
+        for button_id in [0x01, 0x02, 0x09, 0x0a] {
+            for layer in 0..=1 {
+                assert_eq!(record(button_id, layer).bytes,
+                    payload.records.iter().find(|r| r.button_id == button_id && r.layer == layer).unwrap().bytes);
+            }
         }
-        assert!(payload.records.iter().filter(|record| ![0x0b, 0x0c].contains(&record.button_id))
-            .all(|record| !records.iter().any(|written| written.button_id == record.button_id && written.layer == record.layer)));
+    }
+
+    #[test]
+    fn default_profile_rejects_actions_the_mouse_cannot_store_before_writes() {
+        let payload = complete_payload();
+        let mut config = crate::config::default_seed_config();
+        let binding = config.bindings.iter().find(|binding|
+            binding.profile_id == "default" && binding.control_id.as_str() == "thumb_01"
+        ).unwrap();
+        let action_id = binding.action_id.clone();
+        let action = config.actions.iter_mut().find(|action| action.id == action_id).unwrap();
+        action.action_type = crate::config::ActionType::Disabled;
+        action.payload = crate::config::ActionPayload::Disabled(crate::config::DisabledActionPayload {});
+        let error = sidearm_mapping_records(&payload, &config).unwrap_err();
+        assert!(error.contains("cannot be stored in onboard memory"));
     }
 
     #[test]

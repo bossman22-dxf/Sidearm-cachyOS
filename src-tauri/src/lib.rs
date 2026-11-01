@@ -2981,11 +2981,15 @@ async fn set_mouse_poll_rate(hz: u16) -> Result<linux_onboard_backup::LinuxMouse
 }
 
 #[tauri::command]
-async fn apply_naga_standard_mapping(path: String) -> Result<(), CommandError> {
+async fn apply_naga_standard_mapping(app: AppHandle, path: String) -> Result<(), CommandError> {
     #[cfg(target_os = "linux")]
     {
+        let config_dir = resolve_config_dir(&app)?;
         tauri::async_runtime::spawn_blocking(move || {
-            linux_onboard_backup::apply_sidearm_mapping(std::path::Path::new(&path))
+            let config = load_or_initialize_config(&config_dir)
+                .map_err(|error| CommandError::new("config_load_failed", error.to_string(), None))?
+                .config;
+            linux_onboard_backup::apply_sidearm_mapping(std::path::Path::new(&path), &config)
                 .map_err(|message| CommandError::new("onboard_mapping_failed", message, None))
         })
         .await
@@ -2993,11 +2997,10 @@ async fn apply_naga_standard_mapping(path: String) -> Result<(), CommandError> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = path;
+        let _ = (app, path);
         Err(CommandError::internal("Native onboard mapping is not available on this platform."))
     }
 }
-
 #[tauri::command]
 async fn swap_naga_auxiliary_and_tilt_directions(path: String) -> Result<(), CommandError> {
     #[cfg(target_os = "linux")]
