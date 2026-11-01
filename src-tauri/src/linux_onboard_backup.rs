@@ -767,38 +767,56 @@ mod tests {
     }
 
     #[test]
-    fn sidearm_mapping_sets_top_aux_buttons_to_back_and_forward() {
+    fn profile_mapping_writes_all_fourteen_key_controls_from_live_encoder_bindings() {
         let mut payload = complete_payload();
         for (index, record) in payload.records.iter_mut().enumerate() {
             record.bytes[7] = index as u8;
             record.bytes[8] = 0xaa;
             record.bytes[9] = 0xbb;
         }
-        let records = sidearm_mapping_records(&payload).unwrap();
-        assert_eq!(records.len(), 4);
-        // Top auxiliary 1 is Mouse Button 4 (Back), on both layers.
-        assert_eq!((records[0].button_id, records[0].layer), (0x0b, 0));
-        assert_eq!(&records[0].bytes[3..7], &[1, 1, 4, 0]);
-        assert_eq!((records[1].button_id, records[1].layer), (0x0b, 1));
-        assert_eq!(&records[1].bytes[3..7], &[1, 1, 4, 0]);
-        // Top auxiliary 2 is Mouse Button 5 (Forward), on both layers.
-        assert_eq!((records[2].button_id, records[2].layer), (0x0c, 0));
-        assert_eq!(&records[2].bytes[3..7], &[1, 1, 5, 0]);
-        assert_eq!((records[3].button_id, records[3].layer), (0x0c, 1));
-        assert_eq!(&records[3].bytes[3..7], &[1, 1, 5, 0]);
-        // The four top-button records change only their action bytes. Every
-        // other byte of each record (and every non-target record) is untouched.
+        let bindings = (1..=12).map(|number| crate::mouse_memory::OnboardBinding {
+            control_id: format!("thumb_{number:02}"),
+            encoded_key: format!("F{}", number + 12),
+        }).chain([
+            crate::mouse_memory::OnboardBinding { control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into() },
+            crate::mouse_memory::OnboardBinding { control_id: "top_aux_02".into(), encoded_key: "Alt+F24".into() },
+        ]).collect::<Vec<_>>();
+
+        let records = sidearm_mapping_records(&payload, &bindings).unwrap();
+        assert_eq!(records.len(), 14);
+        let expected_ids: BTreeSet<u8> = [
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46,
+            0x47, 0x48, 0x49, 0x4a, 0x4b, 0x0b, 0x0c,
+        ].into_iter().collect();
+        assert_eq!(records.iter().map(|record| record.button_id).collect::<BTreeSet<_>>(), expected_ids);
         for record in &records {
-            let original = payload.records.iter()
-                .find(|item| item.button_id == record.button_id && item.layer == record.layer)
-                .unwrap();
-            let mouse_button = if record.button_id == 0x0b { 4 } else { 5 };
-            let mut expected = original.bytes;
-            expected[3..7].copy_from_slice(&[0x01, 0x01, mouse_button, 0x00]);
-            assert_eq!(record.bytes, expected);
+            assert_eq!(record.layer, 0, "only standard-layer onboard records are written");
+            assert_eq!(record.bytes[3], 0x02, "every profile encoder is a key record");
+            assert_eq!(record.bytes[4], 0x02, "key record contains modifier and HID usage");
         }
-        assert!(payload.records.iter().filter(|record| ![0x0b, 0x0c].contains(&record.button_id))
-            .all(|record| !records.iter().any(|written| written.button_id == record.button_id && written.layer == record.layer)));
+        // Every non-target record, including native mouse and wheel controls,
+        // is absent from the write list and remains untouched.
+        assert!(payload.records.iter()
+            .filter(|record| !expected_ids.contains(&record.button_id))
+            .all(|record| !records.iter().any(|written|
+                written.button_id == record.button_id && written.layer == record.layer)));
+    }
+
+    #[test]
+    fn profile_mapping_rejects_missing_or_duplicate_encoder_bindings() {
+        let payload = complete_payload();
+        let mut bindings = (1..=12).map(|number| crate::mouse_memory::OnboardBinding {
+            control_id: format!("thumb_{number:02}"),
+            encoded_key: format!("F{}", number + 12),
+        }).collect::<Vec<_>>();
+        bindings.push(crate::mouse_memory::OnboardBinding {
+            control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into(),
+        });
+        assert!(sidearm_mapping_records(&payload, &bindings).unwrap_err().contains("top_aux_02"));
+        bindings.push(crate::mouse_memory::OnboardBinding {
+            control_id: "top_aux_01".into(), encoded_key: "Alt+F23".into(),
+        });
+        assert!(sidearm_mapping_records(&payload, &bindings).unwrap_err().contains("duplicate"));
     }
 
     #[test]
