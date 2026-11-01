@@ -161,7 +161,18 @@ where
                 }
                 status if response_is_pending(status) => {}
                 COMMAND_STATUS_NO_RESPONSE => {
-                    return Err("Mouse timeout. Move it to wake it up.".into());
+                    let target = if class == CLASS_BUTTON && command == CMD_GET_BUTTON && request[5] >= 3 {
+                        format!(" (stored bank {}, button {:#04x}, layer {})", request[8], request[9], request[10])
+                    } else if class == CLASS_BUTTON && command == 0x0c && request[5] >= 3 {
+                        format!(" (stored bank {}, button {:#04x}, layer {})", request[8], request[9], request[10])
+                    } else if class == CLASS_BUTTON && command == CMD_GET_BUTTON_IDS {
+                        " (reading the onboard button inventory)".to_string()
+                    } else {
+                        String::new()
+                    };
+                    return Err(format!(
+                        "Mouse timeout (status 0x04) for HID command {class:#04x}/{command:#04x}{target}. Move the mouse to wake it, then retry."
+                    ));
                 }
                 0x03 => {
                     return Err(format!("HID query {class:#04x}/{command:#04x} was rejected (status 0x03)"));
@@ -431,7 +442,11 @@ impl LinuxOnboardDevice {
 
     fn verify_active_mirror(&self, records: &[RawButtonRecord]) -> Result<(), String> {
         for record in records {
-            let actual = self.raw_button_record_from(0x00, record.button_id, record.layer)?;
+            let actual = self.raw_button_record_from(0x00, record.button_id, record.layer)
+                .map_err(|error| format!(
+                    "Could not verify active-bank button {:#04x} layer {}: {error}",
+                    record.button_id, record.layer
+                ))?;
             let mut expected = record.bytes;
             expected[0] = 0x00;
             expected[2] = 0x00;
@@ -484,8 +499,16 @@ impl LinuxOnboardDevice {
         let expected = normalize_binding_bytes(record.bytes);
         let mut wire = expected;
         wire[2] = record.layer;
-        self.command(CLASS_BUTTON, 0x0c, &wire)?;
-        let readback = self.raw_button_record(record.button_id, record.layer)?;
+        self.command(CLASS_BUTTON, 0x0c, &wire)
+            .map_err(|error| format!(
+                "Could not write onboard button {:#04x} layer {}: {error}",
+                record.button_id, record.layer
+            ))?;
+        let readback = self.raw_button_record(record.button_id, record.layer)
+            .map_err(|error| format!(
+                "Could not read back onboard button {:#04x} layer {}: {error}",
+                record.button_id, record.layer
+            ))?;
         if readback != expected {
             return Err(format!("button {:#04x} layer {} did not read back byte-for-byte after restore", record.button_id, record.layer));
         }
@@ -861,8 +884,9 @@ where
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
     let device = LinuxOnboardDevice::open()?;
-    let button_ids = device.button_ids()?;
-    if device.mode()? != MODE_NORMAL {
+    let button_ids = device.button_ids()
+        .map_err(|error| format!("Could not read the onboard button inventory: {error}"))?;
+    if device.mode().map_err(|error| format!("Could not read the mouse mode: {error}"))? != MODE_NORMAL {
         return Err("Turn off driver mode before saving to the mouse.".into());
     }
 
@@ -872,7 +896,9 @@ where
             current_records.push(RawButtonRecord {
                 button_id,
                 layer,
-                bytes: device.raw_button_record(button_id, layer)?,
+                bytes: device.raw_button_record(button_id, layer).map_err(|error| format!(
+                    "Could not read the current stored assignment for button {button_id:#04x} layer {layer}: {error}"
+                ))?,
             });
         }
     }
@@ -885,6 +911,18 @@ where
     let mut targets = build(&current_payload)?;
     targets.sort_by_key(|record| std::cmp::Reverse(record.layer));
     let mappings = changed_mapping_records(&current_records, &targets)?;
+    let differing_records = targets.iter().filter(|target| {
+        current_records.iter().any(|current| {
+            current.button_id == target.button_id
+                && current.layer == target.layer
+                && current.bytes != target.bytes
+        })
+    }).count();
+    log::info!(
+        "[onboard] Default-profile sync: {differing_records} of {} records differ; {} SET operations planned (including required normal-layer cleanup)",
+        targets.len(),
+        mappings.len()
+    );
 
     let current_by_address: BTreeMap<(u8, u8), &RawButtonRecord> = current_records.iter()
         .map(|record| ((record.button_id, record.layer), record))
