@@ -5,7 +5,7 @@ This document traces the **Windows implementation in the upstream Sidearm projec
 ## Scope and provenance
 
 - Upstream repository: [danscMax/Sidearm](https://github.com/danscMax/Sidearm).
-- The fork's README points to that repository for the original project source/build instructions: [fork README, build instructions](https://github.com/bossman22-dxf/Sidearm-cachyOS/blob/feat/open-naga-diff-onboard-writes/README.md#L100-L108).
+- The fork's README points to that repository for the original project source/build instructions: [fork README, build instructions](https://github.com/bossman22-dxf/Sidearm-cachyOS/blob/3a7638c44c6a15d8814f9382e00b4107d6c28c64/README.md#L100-L108).
 - The upstream README identifies Windows 10/11 as its platform and gives the same clone URL: [upstream README, requirements/building](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/README.md#L94-L108).
 - Source snapshot traced here: upstream commit [`41e750032de13cf6081d046913f4100390c009d9`](https://github.com/danscMax/Sidearm/commit/41e750032de13cf6081d046913f4100390c009d9). The source links below are pinned to this immutable revision so later upstream edits do not silently change this record.
 
@@ -164,7 +164,7 @@ The Windows source defines an additional signal mode that must not be confused w
 - Each key-capable control is assigned a reserved consumer-page usage. The source's comments say Windows ignores these reserved usages; Sidearm's helper reads them directly from the HID collection.
 - The reader expects the report ID first, followed by little-endian 16-bit usage values. The consumer report is an **input** signal; it is not the vendor feature report used to write onboard records.
 - The source initializes consumer-signal mode to enabled by default. A config-side file named `onboard-key-signals` switches the key buttons back to F13–F24 signals.
-- In consumer mode, a button record uses category `0x0a` and carries the consumer usage; Sidearm reads the corresponding input report and translates the usage to the configured key action.
+- In consumer mode, a button record uses category `0x0a` and carries the consumer usage; Sidearm reads the corresponding input report and translates the usage to the configured key action. The upstream `write_target` path writes this consumer record to both layer 0 and layer 1, whereas ordinary key records use the layer-0 path.
 
 Sources: [model consumer interface/report/usages](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/device_catalog.rs#L153-L172), [consumer mode default and binding selection](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/mouse_memory.rs#L96-L108) and [consumer signal selection](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/mouse_memory.rs#L214-L276), [report parsing](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/capture_backend/consumer.rs#L24-L38), and [Windows consumer collection reader](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/capture_backend/consumer.rs#L194-L248).
 
