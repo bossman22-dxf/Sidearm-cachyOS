@@ -3612,6 +3612,96 @@ mod tests {
     }
 
     #[test]
+    fn migration_updates_untouched_legacy_default_to_stock_naga_layout() {
+        let mut config = default_seed_config();
+        config.settings.naga_default_layout_applied = false;
+        config.settings.hypershift_trigger = "mouse_right".into();
+
+        for (control_id, old_label) in [
+            ("thumb_01", "Copy"),
+            ("thumb_02", "Paste"),
+            ("thumb_03", "Find"),
+            ("thumb_04", "Undo"),
+            ("thumb_05", "Save"),
+            ("thumb_06", "Close tab"),
+            ("mouse_4", "Wheel Tilt Left"),
+            ("mouse_5", "Wheel Tilt Right"),
+        ] {
+            let binding = config.bindings.iter_mut().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id.as_str() == control_id
+            }).expect("legacy seeded binding exists");
+            binding.label = old_label.into();
+        }
+
+        for control_id in [
+            "thumb_07", "thumb_08", "thumb_09", "thumb_10", "thumb_11", "thumb_12",
+            "top_aux_01", "top_aux_02", "wheel_click",
+        ] {
+            config.bindings.retain(|binding| {
+                !(binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id.as_str() == control_id)
+            });
+            let id = action_id("default", Layer::Standard, &ControlId::new(control_id));
+            config.actions.retain(|action| action.id != id);
+        }
+
+        migrate_naga_default_layout(&mut config);
+
+        assert!(config.settings.naga_default_layout_applied);
+        assert_eq!(config.settings.hypershift_trigger, "none");
+        for control_id in [
+            "thumb_07", "thumb_08", "thumb_09", "thumb_10", "thumb_11", "thumb_12",
+            "top_aux_01", "top_aux_02", "wheel_click",
+        ] {
+            assert!(config.bindings.iter().any(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id.as_str() == control_id
+                    && binding.enabled
+            }), "migration should add {control_id}");
+        }
+
+        let thumb_01 = config.bindings.iter().find(|binding| {
+            binding.profile_id == "default"
+                && binding.layer == Layer::Standard
+                && binding.control_id.as_str() == "thumb_01"
+        }).expect("thumb 1 binding");
+        let action = config.actions.iter().find(|action| action.id == thumb_01.action_id)
+            .expect("thumb 1 action");
+        match &action.payload {
+            ActionPayload::Shortcut(payload) => assert_eq!(payload.key, "1"),
+            _ => panic!("thumb 1 should emit the number 1"),
+        }
+    }
+
+    #[test]
+    fn migration_preserves_customized_default_thumb_mapping() {
+        let mut config = default_seed_config();
+        config.settings.naga_default_layout_applied = false;
+        let binding = config.bindings.iter_mut().find(|binding| {
+            binding.profile_id == "default"
+                && binding.layer == Layer::Standard
+                && binding.control_id.as_str() == "thumb_01"
+        }).expect("thumb 1 binding");
+        binding.label = "My custom action".into();
+
+        migrate_naga_default_layout(&mut config);
+
+        assert!(config.settings.naga_default_layout_applied);
+        assert_eq!(
+            config.bindings.iter().find(|binding| {
+                binding.profile_id == "default"
+                    && binding.layer == Layer::Standard
+                    && binding.control_id.as_str() == "thumb_01"
+            }).unwrap().label,
+            "My custom action"
+        );
+    }
+
+    #[test]
     fn repair_clipboard_action_is_schema_valid() {
         // Guard against the actionType-enum gap in config.v3.schema.json: a config
         // holding a repairClipboard action must pass JSON-schema validation (the
