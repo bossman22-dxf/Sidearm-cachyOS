@@ -32,7 +32,9 @@ pub struct DeviceIdentity {
 pub struct RawButtonRecord {
     pub button_id: u8,
     pub layer: u8,
-    /// Exact ten bytes returned by GET_BUTTON, including reserved/unknown data.
+    /// Normalized ten-byte binding, preserving function/reserved bytes. The receiver's
+    /// reply byte 2 is metadata rather than a layer echo and is stored as zero; `layer`
+    /// is the separate address used in GET_BUTTON/SET_BUTTON requests.
     pub bytes: [u8; BUTTON_RECORD_LEN],
 }
 
