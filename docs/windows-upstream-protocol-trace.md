@@ -205,3 +205,37 @@ The user's original observations remain recorded in [`linux-naga-v2-hyperspeed-h
 3. Establish the Linux raw-HID report descriptor and report IDs for the exact `MI_00` vendor collection and `MI_01&Col03` consumer collection.
 4. Compare read-only Linux reports with the upstream layouts before attempting any write.
 5. Only after report transport and read-back behaviour are established, design a controlled write/restore test. Record the exact physical control pressed whenever translating vendor IDs into a labelled hardware diagram.
+
+
+## Clarifying the 19 physical buttons versus 21 onboard addresses
+
+The upstream catalogue's 21 addressable records should not be described as 21 physical programmable buttons:
+
+- 12 thumb-grid buttons: `0x40`–`0x4b`.
+- 2 top auxiliary buttons: `0x0b`, `0x0c`.
+- 3 primary mouse buttons: left, right, and wheel click (`0x01`–`0x03`).
+- 2 wheel-tilt directions, represented as Mouse 4/5 (`0x34`, `0x35`).
+
+That is 19 physical programmable buttons. The catalogue additionally contains two wheel-motion records, `wheel_up` (`0x09`) and `wheel_down` (`0x0a`), which bring the onboard record inventory to 21 button/control IDs. Each address has two record layers in the Linux backup format, giving 42 raw records. The physical-button count and the storage-address count are different things.
+
+Source: [upstream Naga V2 HyperSpeed model catalogue](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/device_catalog.rs#L123-L152).
+
+## Linux fork transport differences still requiring proof
+
+The fork's current Linux implementation is a separate transport adaptation. It must not be treated as protocol-equivalent merely because it uses the same command class and control IDs.
+
+| Area | Original Windows upstream | Current Linux fork | Required evidence |
+|---|---|---|---|
+| HID feature report ID | `0x03`; 91-byte Windows feature buffer including the ID byte | `REPORT_ID = 0x00`; 91-byte HIDAPI buffer | A successful read-only Linux vendor command on the user's actual interface, with a response matching the upstream packet structure. The user's descriptor observation of a 90-byte constant Feature item does not by itself prove the report-ID translation. |
+| Button inventory | Scans candidate button IDs `0x00`–`0xff` using `class 0x02 / command 0x8c` | Uses `class 0x02 / command 0x84` with 22 zero argument bytes and expects a 21-ID list | Confirm this inventory command from an original source/capture, or replace it with enumeration using the upstream per-button read query. In the Windows implementation, `class 0x00 / command 0x84` is the device-mode query; do not confuse command IDs across classes. |
+| Thumb writes | Uses the slot feature-report path for the 12 thumb IDs that have slots; uses the per-button command path for controls without slots | Current `write_raw_record` sends `class 0x02 / command 0x0c` for every record, including slot-backed thumbs | Confirm that the command path is accepted for slot-backed thumb records on this device, or implement the upstream slot path for those 12 IDs. Read-back alone must be checked against the record the firmware actually plays. |
+| Device mode before mapping | Windows has an explicit `ensure_normal_mode` operation that writes and verifies Normal mode | Linux mapping currently refuses to proceed unless a read already reports `MODE_NORMAL`; it does not switch modes in `apply_mapping_records` | Keep UI/help text consistent with this precondition, or implement and verify a deliberate mode transition with a rollback plan. |
+
+Source references:
+- Windows report ID and feature calls: [`mouse_memory.rs`](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/mouse_memory.rs#L1-L36) and [feature I/O](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/mouse_memory.rs#L953-L985).
+- Windows per-button scan: [`probe_report` and `raw_button_record`](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/mouse_memory.rs#L710-L752).
+- Windows slot-backed thumb writer and no-slot command writer: [`write_button` / `write_key_command`](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/mouse_memory.rs#L553-L583); slot table: [`device_catalog.rs`](https://github.com/danscMax/Sidearm/blob/41e750032de13cf6081d046913f4100390c009d9/src-tauri/src/device_catalog.rs#L123-L152).
+- Linux report ID and inventory query: [`linux_onboard_backup.rs`](https://github.com/bossman22-dxf/Sidearm-cachyOS/blob/feat/open-naga-diff-onboard-writes/src-tauri/src/linux_onboard_backup.rs#L20-L53) and [Linux button inventory / writer](https://github.com/bossman22-dxf/Sidearm-cachyOS/blob/feat/open-naga-diff-onboard-writes/src-tauri/src/linux_onboard_backup.rs#L455-L520).
+- Linux mode precondition and mapping procedure: [`apply_mapping_records`](https://github.com/bossman22-dxf/Sidearm-cachyOS/blob/feat/open-naga-diff-onboard-writes/src-tauri/src/linux_onboard_backup.rs#L877-L930).
+
+These differences are not evidence that the Linux implementation is broken; they are the items that need to be confirmed or reconciled before calling a physical-device write path validated.
