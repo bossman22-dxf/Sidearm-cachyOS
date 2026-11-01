@@ -2019,7 +2019,7 @@ fn seed_profiles() -> Vec<Profile> {
             "default",
             "Default",
             0,
-            Some("Fallback profile for unmatched applications."),
+            Some("Default Razer Naga layout: thumb keys 1–0, minus and equals; top auxiliary Back/Forward; wheel tilt horizontal scrolling; primary mouse controls remain native."),
         ),
         profile(
             "main",
@@ -2427,78 +2427,18 @@ fn seed_actions() -> Vec<Action> {
     let mut actions = Vec::new();
 
     for (profile, layer, control, display_name, key, ctrl, shift, alt, win, raw) in [
-        (
-            "default",
-            Layer::Standard,
-            ControlId::new("thumb_01"),
-            "Ctrl + C",
-            "C",
-            true,
-            false,
-            false,
-            false,
-            "^c",
-        ),
-        (
-            "default",
-            Layer::Standard,
-            ControlId::new("thumb_02"),
-            "Ctrl + V",
-            "V",
-            true,
-            false,
-            false,
-            false,
-            "^v",
-        ),
-        (
-            "default",
-            Layer::Standard,
-            ControlId::new("thumb_03"),
-            "Ctrl + F",
-            "F",
-            true,
-            false,
-            false,
-            false,
-            "^f",
-        ),
-        (
-            "default",
-            Layer::Standard,
-            ControlId::new("thumb_04"),
-            "Ctrl + Z",
-            "Z",
-            true,
-            false,
-            false,
-            false,
-            "^z",
-        ),
-        (
-            "default",
-            Layer::Standard,
-            ControlId::new("thumb_05"),
-            "Ctrl + S",
-            "S",
-            true,
-            false,
-            false,
-            false,
-            "^s",
-        ),
-        (
-            "default",
-            Layer::Standard,
-            ControlId::new("thumb_06"),
-            "Ctrl + W",
-            "W",
-            true,
-            false,
-            false,
-            false,
-            "^w",
-        ),
+        ("default", Layer::Standard, ControlId::new("thumb_01"), "1", "1", false, false, false, false, "1"),
+        ("default", Layer::Standard, ControlId::new("thumb_02"), "2", "2", false, false, false, false, "2"),
+        ("default", Layer::Standard, ControlId::new("thumb_03"), "3", "3", false, false, false, false, "3"),
+        ("default", Layer::Standard, ControlId::new("thumb_04"), "4", "4", false, false, false, false, "4"),
+        ("default", Layer::Standard, ControlId::new("thumb_05"), "5", "5", false, false, false, false, "5"),
+        ("default", Layer::Standard, ControlId::new("thumb_06"), "6", "6", false, false, false, false, "6"),
+        ("default", Layer::Standard, ControlId::new("thumb_07"), "7", "7", false, false, false, false, "7"),
+        ("default", Layer::Standard, ControlId::new("thumb_08"), "8", "8", false, false, false, false, "8"),
+        ("default", Layer::Standard, ControlId::new("thumb_09"), "9", "9", false, false, false, false, "9"),
+        ("default", Layer::Standard, ControlId::new("thumb_10"), "0", "0", false, false, false, false, "0"),
+        ("default", Layer::Standard, ControlId::new("thumb_11"), "-", "-", false, false, false, false, "-"),
+        ("default", Layer::Standard, ControlId::new("thumb_12"), "=", "=", false, false, false, false, "="),
         (
             "main",
             Layer::Standard,
@@ -3041,6 +2981,27 @@ fn seed_actions() -> Vec<Action> {
         ));
     }
 
+    // Native Naga top auxiliary buttons become standard browser Back/Forward.
+    for ( (control, display_name, action) in [
+        (ControlId::new("top_aux_01"), "Back", MouseActionKind::MouseBack),
+        (ControlId::new("top_aux_02"), "Forward", MouseActionKind::MouseForward),
+    ] {
+        actions.push(Action {
+            id: action_id("default", Layer::Standard, &control),
+            action_type: ActionType::MouseAction,
+            payload: ActionPayload::MouseAction(MouseActionPayload {
+                action,
+                ctrl: false,
+                shift: false,
+                alt: false,
+                win: false,
+            }),
+            display_name: display_name.into(),
+            notes: Some("Default Razer Naga top auxiliary action.".into()),
+            conditions: Vec::new(),
+        });
+    }
+
     // The Naga V2 HyperSpeed reports wheel tilt as native Mouse 4 / Mouse 5.
     // Bind those controls to horizontal scrolling by default; the platform
     // capture backends translate their physical events into these actions.
@@ -3071,14 +3032,22 @@ fn seed_bindings() -> Vec<Binding> {
     let mut bindings = Vec::new();
 
     for (profile, layer, control, label) in [
-        ("default", Layer::Standard, ControlId::new("thumb_01"), "Copy"),
-        ("default", Layer::Standard, ControlId::new("thumb_02"), "Paste"),
-        ("default", Layer::Standard, ControlId::new("thumb_03"), "Find"),
-        ("default", Layer::Standard, ControlId::new("thumb_04"), "Undo"),
-        ("default", Layer::Standard, ControlId::new("thumb_05"), "Save"),
-        ("default", Layer::Standard, ControlId::new("thumb_06"), "Close tab"),
-        ("default", Layer::Standard, ControlId::new("mouse_4"), "Wheel Tilt Left"),
-        ("default", Layer::Standard, ControlId::new("mouse_5"), "Wheel Tilt Right"),
+        ("default", Layer::Standard, ControlId::new("thumb_01"), "1"),
+        ("default", Layer::Standard, ControlId::new("thumb_02"), "2"),
+        ("default", Layer::Standard, ControlId::new("thumb_03"), "3"),
+        ("default", Layer::Standard, ControlId::new("thumb_04"), "4"),
+        ("default", Layer::Standard, ControlId::new("thumb_05"), "5"),
+        ("default", Layer::Standard, ControlId::new("thumb_06"), "6"),
+        ("default", Layer::Standard, ControlId::new("thumb_07"), "7"),
+        ("default", Layer::Standard, ControlId::new("thumb_08"), "8"),
+        ("default", Layer::Standard, ControlId::new("thumb_09"), "9"),
+        ("default", Layer::Standard, ControlId::new("thumb_10"), "0"),
+        ("default", Layer::Standard, ControlId::new("thumb_11"), "-"),
+        ("default", Layer::Standard, ControlId::new("thumb_12"), "="),
+        ("default", Layer::Standard, ControlId::new("top_aux_01"), "Back"),
+        ("default", Layer::Standard, ControlId::new("top_aux_02"), "Forward"),
+        ("default", Layer::Standard, ControlId::new("mouse_4"), "Scroll Left"),
+        ("default", Layer::Standard, ControlId::new("mouse_5"), "Scroll Right"),
         ("main", Layer::Standard, ControlId::new("thumb_01"), "Delete"),
         ("main", Layer::Standard, ControlId::new("thumb_02"), "Backspace"),
         ("main", Layer::Standard, ControlId::new("thumb_03"), "Shift + F3"),
