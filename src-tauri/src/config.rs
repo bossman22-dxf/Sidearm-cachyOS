@@ -2982,7 +2982,7 @@ fn seed_actions() -> Vec<Action> {
     }
 
     // Native Naga top auxiliary buttons become standard browser Back/Forward.
-    for ( (control, display_name, action) in [
+    for (control, display_name, action) in [
         (ControlId::new("top_aux_01"), "Back", MouseActionKind::MouseBack),
         (ControlId::new("top_aux_02"), "Forward", MouseActionKind::MouseForward),
     ] {
