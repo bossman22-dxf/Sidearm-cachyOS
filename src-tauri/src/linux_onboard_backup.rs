@@ -1336,6 +1336,25 @@ mod tests {
     }
 
     #[test]
+    fn response_reader_identifies_timed_out_button_and_layer() {
+        let mut request = [0u8; PAYLOAD_LEN];
+        request[1] = 0x1f;
+        request[5] = 10;
+        request[6] = CLASS_BUTTON;
+        request[7] = CMD_GET_BUTTON;
+        request[8..18].copy_from_slice(&[0x01, 0x40, 0x01, 0, 0, 0, 0, 0, 0, 0]);
+        request[88] = checksum(&request);
+        let error = wait_for_command_reply(
+            &request,
+            || Ok(response_for(&request, COMMAND_STATUS_NO_RESPONSE)),
+            |_| {},
+        ).unwrap_err();
+        assert!(error.contains("HID command 0x02/0x8c"));
+        assert!(error.contains("stored bank 1, button 0x40, layer 1"));
+        assert!(error.contains("status 0x04"));
+    }
+
+    #[test]
     fn response_reader_rejects_unknown_zero_status() {
         let request = battery_request();
         let mut reads = 0;
