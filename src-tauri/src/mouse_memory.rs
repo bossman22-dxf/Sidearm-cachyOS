@@ -234,6 +234,12 @@ fn binding_target(model: &NativeModel, binding: &OnboardBinding) -> Result<(u8, 
     target_in_mode(model, binding, CONSUMER_SIGNALS.load(Ordering::Relaxed))
 }
 
+pub(crate) fn linux_onboard_action(binding: &OnboardBinding) -> Result<(u8, OnboardAction), String> {
+    // Linux writes the keyboard encoder signal that Sidearm captures. The
+    // Windows consumer-page transport is not available on this device path.
+    target_in_mode(config_model(), binding, false)
+}
+
 fn target_in_mode(model: &NativeModel, binding: &OnboardBinding, consumer: bool) -> Result<(u8, OnboardAction), String> {
     let button_id = model
         .button_id_for(&binding.control_id)
@@ -369,7 +375,7 @@ pub enum OnboardAction {
 
 impl OnboardAction {
     /// `category, len, values…` as the set/get-button commands carry them.
-    fn bytes(self) -> Vec<u8> {
+    pub(crate) fn bytes(self) -> Vec<u8> {
         match self {
             Self::Key { modifier, usage } => vec![CATEGORY_KEY, 0x02, modifier, usage],
             Self::KeyTap { modifier, usage } => {
