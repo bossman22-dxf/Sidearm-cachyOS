@@ -1069,13 +1069,13 @@ fn migrate_naga_default_layout(config: &mut AppConfig) {
                 }
             };
 
-            if should_update {
-                if let Some(seed_action) = seeded_actions.iter().find(|action| action.id == seed_binding.action_id) {
-                    if let Some(existing_action) = config.actions.iter_mut().find(|action| action.id == seed_action.id) {
-                        *existing_action = seed_action.clone();
-                    } else {
-                        config.actions.push(seed_action.clone());
-                    }
+            if should_update
+                && let Some(seed_action) = seeded_actions.iter().find(|action| action.id == seed_binding.action_id)
+            {
+                if let Some(existing_action) = config.actions.iter_mut().find(|action| action.id == seed_action.id) {
+                    *existing_action = seed_action.clone();
+                } else {
+                    config.actions.push(seed_action.clone());
                 }
             }
         }
@@ -2102,6 +2102,7 @@ pub(crate) fn default_seed_config() -> AppConfig {
             show_battery_in_tray: false,
             offline_profile_id: None,
             builtin_app_rules_defaults_applied: true,
+                naga_default_layout_applied: false,
             naga_default_layout_applied: true,
         },
         profiles: seed_profiles(),
