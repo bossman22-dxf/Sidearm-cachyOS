@@ -126,9 +126,12 @@ Descriptor highlights:
 - A vendor-defined Feature item: Usage Page `0xFF00`, Usage `0x02`,
   Feature `Cnst,Arr,Abs`, report count 90 bytes.
 
-The 90-byte feature report is potentially relevant to device-specific configuration
-or onboard-memory operations. Its descriptor only declares its size/type; it does
-not reveal the meaning of its bytes or establish the Sidearm onboard button IDs.
+The descriptor declares a 90-byte Feature item, but its Main item is
+\`Feature (Cnst,Arr,Abs)\` (constant), not a normal data feature field. Do not assume
+this is the writable configuration/onboard-memory channel. Its descriptor does not
+reveal the meaning of any payload bytes or establish the Sidearm onboard button IDs.
+The actual Razer vendor-protocol path must be established from the implementation
+and/or controlled raw HID report captures.
 
 ### `000A` — USB interface 01 / event14
 
