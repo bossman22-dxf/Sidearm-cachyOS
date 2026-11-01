@@ -580,90 +580,84 @@ fn sidearm_mapping_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRec
     Ok(records)
 }
 
-/// Apply the fixed Sidearm convention only when the backup still matches the
-/// connected mouse. A failed write restores only attempted top-button records and the original mode.
-pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
+/// Build the optional four-control swap by exchanging action payloads.
+fn sidearm_swap_records(payload: &SnapshotPayload) -> Result<Vec<RawButtonRecord>, String> {
+    let mut records = Vec::with_capacity(8);
+    for layer in 0..=1 {
+        for (top_id, tilt_id) in [(0x0b, 0x34), (0x0c, 0x35)] {
+            let top = payload.records.iter().find(|r| r.button_id == top_id && r.layer == layer)
+                .ok_or_else(|| format!("backup is missing top button {top_id:#04x} layer {layer}"))?;
+            let tilt = payload.records.iter().find(|r| r.button_id == tilt_id && r.layer == layer)
+                .ok_or_else(|| format!("backup is missing wheel-tilt control {tilt_id:#04x} layer {layer}"))?;
+            let mut new_top = top.clone();
+            let mut new_tilt = tilt.clone();
+            new_top.bytes[3..10].copy_from_slice(&tilt.bytes[3..10]);
+            new_tilt.bytes[3..10].copy_from_slice(&top.bytes[3..10]);
+            records.push(new_top);
+            records.push(new_tilt);
+        }
+    }
+    Ok(records)
+}
+
+/// Write a bounded set from an unchanged snapshot. Each write is read back;
+/// failures roll back only attempted targets. Success leaves normal onboard mode.
+fn apply_mapping_records(path: &Path, build: fn(&SnapshotPayload) -> Result<Vec<RawButtonRecord>, String>) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
-    let saved_mode = payload
-        .device_mode
-        .ok_or_else(|| "backup is missing its original device mode".to_string())?;
-
+    let saved_mode = payload.device_mode.ok_or_else(|| "backup is missing its original device mode".to_string())?;
     let device = LinuxOnboardDevice::open()?;
-    let current_mode = device.mode()?;
-    if current_mode != saved_mode {
+    if device.mode()? != saved_mode {
         return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
     }
     for original in &payload.records {
-        let current = device.raw_button_record(original.button_id, original.layer)?;
-        if current != original.bytes {
-            return Err(format!(
-                "button {:#04x} layer {} changed since this backup was created; no mapping was written",
-                original.button_id, original.layer
-            ));
+        if device.raw_button_record(original.button_id, original.layer)? != original.bytes {
+            return Err(format!("button {:#04x} layer {} changed since this backup was created; no mapping was written", original.button_id, original.layer));
         }
     }
-
-    // Resolve both the new values and their exact originals before changing
-    // mode or touching the device. The write list contains only four records:
-    // the two top auxiliary buttons on the standard and Hypershift layers.
-    let mappings = sidearm_mapping_records(payload)?;
-    let original_mappings: Vec<&RawButtonRecord> = mappings
-        .iter()
-        .map(|mapping| {
-            payload
-                .records
-                .iter()
-                .find(|record| {
-                    record.button_id == mapping.button_id && record.layer == mapping.layer
-                })
-                .ok_or_else(|| {
-                    format!(
-                        "backup is missing original button {:#04x} layer {}",
-                        mapping.button_id, mapping.layer
-                    )
-                })
-        })
-        .collect::<Result<_, _>>()?;
-
+    let mappings = build(payload)?;
+    let originals: Vec<&RawButtonRecord> = mappings.iter().map(|mapping| {
+        payload.records.iter().find(|r| r.button_id == mapping.button_id && r.layer == mapping.layer)
+            .ok_or_else(|| format!("backup is missing original button {:#04x} layer {}", mapping.button_id, mapping.layer))
+    }).collect::<Result<_, _>>()?;
     let original_mode = match device.ensure_normal_mode() {
         Ok(mode) => mode,
         Err(error) => {
             let rollback = device.set_mode(saved_mode);
             return match rollback {
                 Ok(()) => Err(format!("could not switch to normal onboard mode; original mode restored: {error}")),
-                Err(rollback_error) => Err(format!("could not switch to normal onboard mode: {error}; original mode rollback failed: {rollback_error}")),
+                Err(e) => Err(format!("could not switch to normal onboard mode: {error}; original mode rollback failed: {e}")),
             };
         }
     };
-
-    // Roll back only records this operation actually attempted. Never rewrite
-    // the thumb-button or other unrelated records, even during recovery.
-    let mut attempted_originals: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
-    for (mapping, original) in mappings.iter().zip(original_mappings.iter()) {
-        attempted_originals.push(original);
+    let mut attempted: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
+    for (mapping, original) in mappings.iter().zip(originals.iter()) {
+        attempted.push(original);
         if let Err(error) = device.write_raw_record(mapping) {
             let mut rollback_errors = Vec::new();
-            for original in attempted_originals.iter().rev() {
-                if let Err(rollback) = device.write_raw_record(original) {
-                    rollback_errors.push(rollback);
-                }
+            for record in attempted.iter().rev() {
+                if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
             }
-            if let Err(rollback) = device.set_mode(original_mode) {
-                rollback_errors.push(rollback);
-            }
+            if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
             if rollback_errors.is_empty() {
-                return Err(format!("mapping failed and the original top-button records were restored: {error}"));
+                return Err(format!("mapping failed and the original target records were restored: {error}"));
             }
-            return Err(format!(
-                "mapping failed: {error}; rollback also had {} error(s): {}",
-                rollback_errors.len(),
-                rollback_errors.join("; ")
-            ));
+            return Err(format!("mapping failed: {error}; rollback also had {} error(s): {}", rollback_errors.len(), rollback_errors.join("; ")));
         }
     }
     Ok(())
+}
+
+/// Apply the fixed Sidearm convention to only the two top auxiliary controls.
+pub fn apply_sidearm_mapping(path: &Path) -> Result<(), String> {
+    apply_mapping_records(path, sidearm_mapping_records)
+}
+
+/// Swap the top auxiliary and wheel-tilt actions on both layers. Writes exactly
+/// eight records (four physical controls across two layers).
+pub fn swap_auxiliary_and_tilt_directions(path: &Path) -> Result<(), String> {
+    apply_mapping_records(path, sidearm_swap_records)
 }
 
 /// Apply profile-specific DPI and polling rate without blocking the capture
@@ -793,6 +787,36 @@ mod tests {
         }
         assert!(payload.records.iter().filter(|record| ![0x0b, 0x0c].contains(&record.button_id))
             .all(|record| !records.iter().any(|written| written.button_id == record.button_id && written.layer == record.layer)));
+    }
+
+    #[test]
+    fn swap_changes_only_auxiliary_and_wheel_tilt_actions_on_both_layers() {
+        let mut payload = complete_payload();
+        for record in &mut payload.records {
+            record.bytes[3] = 0x10 + record.button_id;
+            record.bytes[4] = 1;
+            record.bytes[5] = record.layer;
+            record.bytes[6] = 0x55;
+            record.bytes[7] = 0x66;
+            record.bytes[8] = 0x77;
+            record.bytes[9] = 0x88;
+        }
+        let swapped = sidearm_swap_records(&payload).unwrap();
+        assert_eq!(swapped.len(), 8);
+        for layer in 0..=1 {
+            for (top, tilt) in [(0x0b, 0x34), (0x0c, 0x35)] {
+                let a = payload.records.iter().find(|r| r.button_id == top && r.layer == layer).unwrap();
+                let b = payload.records.iter().find(|r| r.button_id == tilt && r.layer == layer).unwrap();
+                let new_a = swapped.iter().find(|r| r.button_id == top && r.layer == layer).unwrap();
+                let new_b = swapped.iter().find(|r| r.button_id == tilt && r.layer == layer).unwrap();
+                assert_eq!(&new_a.bytes[3..10], &b.bytes[3..10]);
+                assert_eq!(&new_b.bytes[3..10], &a.bytes[3..10]);
+                assert_eq!(&new_a.bytes[..3], &a.bytes[..3]);
+                assert_eq!(&new_b.bytes[..3], &b.bytes[..3]);
+            }
+        }
+        assert!(payload.records.iter().filter(|r| ![0x0b, 0x0c, 0x34, 0x35].contains(&r.button_id))
+            .all(|r| !swapped.iter().any(|w| w.button_id == r.button_id && w.layer == r.layer)));
     }
 
     #[test]
