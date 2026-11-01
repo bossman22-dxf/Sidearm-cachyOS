@@ -2741,7 +2741,7 @@ async fn stop_macro_recording(
 #[cfg(target_os = "windows")]
 #[tauri::command]
 async fn apply_onboard_mapping(
-    bindings: Vec<mouse_memory::OnboardBinding>,
+    bindings: Vec<linux_onboard_backup::LinuxOnboardBinding>,
 ) -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let device = mouse_memory::VendorDevice::open_connected()
