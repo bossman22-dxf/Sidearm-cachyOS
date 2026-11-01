@@ -59,6 +59,13 @@ pub struct LinuxMouseSettings {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinuxOnboardBinding {
+    pub control_id: String,
+    pub encoded_key: String,
+}
+
 pub struct LinuxOnboardDevice {
     device: HidDevice,
     report_id: u8,
@@ -557,7 +564,7 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 
 fn sidearm_mapping_records(
     payload: &SnapshotPayload,
-    bindings: &[crate::mouse_memory::OnboardBinding],
+    bindings: &[LinuxOnboardBinding],
 ) -> Result<Vec<RawButtonRecord>, String> {
     // The UI supplies the selected Live profile's standard-layer encoder
     // bindings (thumb 1-12 and the two top auxiliary buttons). Resolve every
@@ -577,19 +584,26 @@ fn sidearm_mapping_records(
         if !seen.insert(binding.control_id.as_str()) {
             return Err(format!("profile contains duplicate onboard mapping for {}", binding.control_id));
         }
-        let (button_id, action) = crate::mouse_memory::linux_onboard_action(binding)?;
+        let button_id = crate::device_catalog::NAGA_V2_HYPERSPEED.button_id_for(&binding.control_id)
+            .ok_or_else(|| format!("{} has no onboard key record", binding.control_id))?;
+        let spec = crate::hotkeys::parse_hotkey(&binding.encoded_key)?;
+        let number = spec.key.display_name.strip_prefix('F')
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|value| (13..=24).contains(value))
+            .ok_or_else(|| format!("{} cannot live in onboard memory; only F13-F24 encoder keys are supported", spec.key.display_name))?;
+        let modifier = u8::from(spec.modifiers.ctrl)
+            | (u8::from(spec.modifiers.shift) << 5)
+            | (u8::from(spec.modifiers.alt) << 6)
+            | (u8::from(spec.modifiers.win) << 3);
+        let encoded = [0x02, 0x02, modifier, 0x68 + (number - 13)];
         let mut record = payload.records.iter()
             .find(|record| record.button_id == button_id && record.layer == 0)
             .cloned()
             .ok_or_else(|| format!("backup is missing {} (button {button_id:#04x})", binding.control_id))?;
-        let encoded = action.bytes();
-        if encoded.len() > 7 {
-            return Err(format!("{} has an onboard record that is too large", binding.control_id));
-        }
-        // Preserve the address header, replace the complete action payload,
+        // Preserve the address header, replace the complete key action payload,
         // and clear unused value bytes so no part of the old action survives.
         record.bytes[3..].fill(0);
-        record.bytes[3..3 + encoded.len()].copy_from_slice(&encoded);
+        record.bytes[3..7].copy_from_slice(&encoded);
         records.push(record);
     }
 
@@ -603,7 +617,7 @@ fn sidearm_mapping_records(
 /// Apply the selected Live profile's standard-layer encoder mapping after a
 /// complete backup and explicit user confirmation. Every requested key control
 /// is written and read back; failure rolls back every attempted record.
-pub fn apply_sidearm_mapping(path: &Path, bindings: &[crate::mouse_memory::OnboardBinding]) -> Result<(), String> {
+pub fn apply_sidearm_mapping(path: &Path, bindings: &[LinuxOnboardBinding]) -> Result<(), String> {
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
