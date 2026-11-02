@@ -1,5 +1,7 @@
 <div align="center">
+# **WIP**
 
+  
 # Sidearm
 
 **An open-source Razer Synapse alternative for the Razer Naga V2 HyperSpeed.**
