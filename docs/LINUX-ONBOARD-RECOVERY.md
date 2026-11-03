@@ -2,9 +2,9 @@
 
 ## Scope
 
-The native Linux backup path currently targets only the verified Razer Naga V2 HyperSpeed receiver (USB VID:PID `1532:00b4`, vendor HID interface 0). It reads 21 known addressable button IDs across layers 0 and 1, preserving each ten-byte record exactly. Other Razer models and Bluetooth are not supported by this path.
+The native Linux backup path currently targets only the verified Razer Naga V2 HyperSpeed receiver (USB VID:PID `1532:00b4`, vendor HID interface 0). It reads 21 known onboard address IDs across layers 0 and 1, preserving each ten-byte record exactly. These comprise 19 physical programmable buttons (12 thumb, 2 top auxiliary, 3 primary clicks, and 2 wheel-tilt directions) plus the two wheel-motion records (up/down). Other Razer models and Bluetooth are not supported by this path.
 
-The backup also records live DPI, polling rate, and the device mode before any Sidearm operation. Restore writes the raw button records and returns the device to that saved mode; it does not restore DPI, polling rate, or battery state. Applying the Sidearm mapping switches the device to normal/onboard mode and leaves it there so the firmware emits the configured thumb and top-panel signals.
+The backup also records live DPI, polling rate, and the device mode before any Sidearm operation. Restore writes the raw button records and returns the device to that saved mode; it does not restore DPI, polling rate, or battery state. Applying the Sidearm mapping currently requires the device to already be in normal/onboard mode; it refuses to write if the device reports driver mode. On success it therefore leaves the device in normal/onboard mode. It does not currently switch modes automatically.
 
 ## Safety
 

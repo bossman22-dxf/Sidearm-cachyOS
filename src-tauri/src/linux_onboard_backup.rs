@@ -10,7 +10,7 @@ use crate::onboard_backup::{
 };
 use hidapi::{HidApi, HidDevice};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{atomic::{AtomicU64, Ordering}, Mutex, MutexGuard},
     thread,
@@ -161,7 +161,19 @@ where
                 }
                 status if response_is_pending(status) => {}
                 COMMAND_STATUS_NO_RESPONSE => {
-                    return Err("Mouse timeout. Move it to wake it up.".into());
+                    let target = if class == CLASS_BUTTON
+                        && request[5] >= 3
+                        && (command == CMD_GET_BUTTON || command == 0x0c)
+                    {
+                        format!(" (stored bank {}, button {:#04x}, layer {})", request[8], request[9], request[10])
+                    } else if class == CLASS_BUTTON && command == CMD_GET_BUTTON_IDS {
+                        " (reading the onboard button inventory)".to_string()
+                    } else {
+                        String::new()
+                    };
+                    return Err(format!(
+                        "Mouse timeout (status 0x04) for HID command {class:#04x}/{command:#04x}{target}. Move the mouse to wake it, then retry."
+                    ));
                 }
                 0x03 => {
                     return Err(format!("HID query {class:#04x}/{command:#04x} was rejected (status 0x03)"));
@@ -431,7 +443,11 @@ impl LinuxOnboardDevice {
 
     fn verify_active_mirror(&self, records: &[RawButtonRecord]) -> Result<(), String> {
         for record in records {
-            let actual = self.raw_button_record_from(0x00, record.button_id, record.layer)?;
+            let actual = self.raw_button_record_from(0x00, record.button_id, record.layer)
+                .map_err(|error| format!(
+                    "Could not verify active-bank button {:#04x} layer {}: {error}",
+                    record.button_id, record.layer
+                ))?;
             let mut expected = record.bytes;
             expected[0] = 0x00;
             expected[2] = 0x00;
@@ -484,8 +500,16 @@ impl LinuxOnboardDevice {
         let expected = normalize_binding_bytes(record.bytes);
         let mut wire = expected;
         wire[2] = record.layer;
-        self.command(CLASS_BUTTON, 0x0c, &wire)?;
-        let readback = self.raw_button_record(record.button_id, record.layer)?;
+        self.command(CLASS_BUTTON, 0x0c, &wire)
+            .map_err(|error| format!(
+                "Could not write onboard button {:#04x} layer {}: {error}",
+                record.button_id, record.layer
+            ))?;
+        let readback = self.raw_button_record(record.button_id, record.layer)
+            .map_err(|error| format!(
+                "Could not read back onboard button {:#04x} layer {}: {error}",
+                record.button_id, record.layer
+            ))?;
         if readback != expected {
             return Err(format!("button {:#04x} layer {} did not read back byte-for-byte after restore", record.button_id, record.layer));
         }
@@ -621,8 +645,8 @@ pub fn restore_backup(path: &Path) -> Result<(), String> {
 ///
 /// Sidearm's profile resolver uses configured action bindings, while the mouse
 /// can store only a small set of native keyboard/mouse actions. We map those
-/// actions directly and preserve captured native records for controls with no
-/// Default-profile binding (left/right click and wheel up/down).
+/// actions directly and preserve the freshly-read onboard assignments for
+/// controls with no Default-profile binding (left/right click and wheel up/down).
 fn sidearm_mapping_records(
     payload: &SnapshotPayload,
     config: &crate::config::AppConfig,
@@ -705,6 +729,66 @@ fn sidearm_mapping_records(
     }
     records.sort_by_key(|record| std::cmp::Reverse(record.layer));
     Ok(records)
+}
+
+/// Select only records whose normalized function bytes differ from the live onboard
+/// snapshot. A changed Hypershift assignment also schedules that control's
+/// standard-layer record: on this receiver the normal-layer SET clears the
+/// layer-status flag left by a Hypershift SET, even when the standard mapping
+/// itself is unchanged. This mirrors OpenNaga's write ordering.
+fn changed_mapping_records(
+    current: &[RawButtonRecord],
+    targets: &[RawButtonRecord],
+) -> Result<Vec<RawButtonRecord>, String> {
+    let mut current_by_address = BTreeMap::new();
+    for record in current {
+        let address = (record.button_id, record.layer);
+        if record.layer > 1 || current_by_address.insert(address, record).is_some() {
+            return Err("live onboard snapshot contains duplicate or invalid button/layer records".into());
+        }
+    }
+
+    let mut target_by_address = BTreeMap::new();
+    for record in targets {
+        let address = (record.button_id, record.layer);
+        if record.layer > 1 || target_by_address.insert(address, record).is_some() {
+            return Err("Default profile contains duplicate or invalid button/layer records".into());
+        }
+        if !current_by_address.contains_key(&address) {
+            return Err(format!(
+                "live onboard snapshot is missing button {:#04x} layer {}",
+                record.button_id, record.layer
+            ));
+        }
+    }
+
+    let hypershift_changed: BTreeSet<u8> = targets.iter()
+        .filter(|target| target.layer == 1
+            && current_by_address.get(&(target.button_id, target.layer))
+                .is_some_and(|before| before.bytes != target.bytes))
+        .map(|target| target.button_id)
+        .collect();
+
+    let mut changed: Vec<RawButtonRecord> = targets.iter()
+        .filter(|target| {
+            target.layer == 1
+                && current_by_address.get(&(target.button_id, target.layer))
+                    .is_some_and(|before| before.bytes != target.bytes)
+        })
+        .cloned()
+        .collect();
+
+    changed.extend(targets.iter().filter(|target| {
+        target.layer == 0
+            && (hypershift_changed.contains(&target.button_id)
+                || current_by_address.get(&(target.button_id, target.layer))
+                    .is_some_and(|before| before.bytes != target.bytes))
+    }).cloned());
+
+    // SET layer 1 first; the corresponding layer 0 write follows to clear the
+    // receiver's layer-status flag.
+    changed.sort_by_key(|record| std::cmp::Reverse(record.layer));
+    Ok(changed)
 }
 
 /// Seven action bytes stored after the profile/button/layer address in GET/SET_BUTTON.
@@ -794,68 +878,122 @@ fn apply_mapping_records<F>(path: &Path, build: F) -> Result<(), String>
 where
     F: FnOnce(&SnapshotPayload) -> Result<Vec<RawButtonRecord>, String>,
 {
+    // Keep the validated backup as the user's recovery file and receiver-model
+    // check, but do not use its old button records as the mapping baseline.
+    // Compare the requested profile with what is stored in the mouse right now.
     let backup = OnboardBackup::load_and_validate(path).map_err(|e| e.to_string())?;
     let payload = &backup.payload;
     validate_restore_payload(payload)?;
-    let saved_mode = payload.device_mode.ok_or_else(|| "backup is missing its original device mode".to_string())?;
     let device = LinuxOnboardDevice::open()?;
-    device.button_ids()?;
-    if device.mode()? != saved_mode {
-        return Err("mouse mode changed since this backup was created; create a fresh backup before mapping".into());
+    let button_ids = device.button_ids()
+        .map_err(|error| format!("Could not read the onboard button inventory: {error}"))?;
+    if device.mode().map_err(|error| format!("Could not read the mouse mode: {error}"))? != MODE_NORMAL {
+        return Err("Turn off driver mode before saving to the mouse.".into());
     }
-    for original in &payload.records {
-        if device.raw_button_record(original.button_id, original.layer)? != normalize_binding_bytes(original.bytes) {
-            return Err(format!("button {:#04x} layer {} changed since this backup was created; no mapping was written", original.button_id, original.layer));
+
+    let mut current_records = Vec::with_capacity(42);
+    for button_id in button_ids {
+        for layer in 0..=1 {
+            current_records.push(RawButtonRecord {
+                button_id,
+                layer,
+                bytes: device.raw_button_record(button_id, layer).map_err(|error| format!(
+                    "Could not read the current stored assignment for button {button_id:#04x} layer {layer}: {error}"
+                ))?,
+            });
         }
     }
-    let mut mappings = build(payload)?;
-    mappings.sort_by_key(|record| std::cmp::Reverse(record.layer));
+
+    // Build the target from the current Default profile. Unassigned controls
+    // retain their current native assignment; explicit Default bindings are
+    // authoritative and replace any differing onboard assignment.
+    let mut current_payload = payload.clone();
+    current_payload.records = current_records.clone();
+    let mut targets = build(&current_payload)?;
+    targets.sort_by_key(|record| std::cmp::Reverse(record.layer));
+    let mappings = changed_mapping_records(&current_records, &targets)?;
+    let differing_records = targets.iter().filter(|target| {
+        current_records.iter().any(|current| {
+            current.button_id == target.button_id
+                && current.layer == target.layer
+                && current.bytes != target.bytes
+        })
+    }).count();
+    log::info!(
+        "[onboard] Default-profile sync: {differing_records} of {} records differ; {} SET operations planned (including required normal-layer cleanup)",
+        targets.len(),
+        mappings.len()
+    );
+
+    let current_by_address: BTreeMap<(u8, u8), &RawButtonRecord> = current_records.iter()
+        .map(|record| ((record.button_id, record.layer), record))
+        .collect();
     let originals: Vec<&RawButtonRecord> = mappings.iter().map(|mapping| {
-        payload.records.iter().find(|r| r.button_id == mapping.button_id && r.layer == mapping.layer)
-            .ok_or_else(|| format!("backup is missing original button {:#04x} layer {}", mapping.button_id, mapping.layer))
+        current_by_address.get(&(mapping.button_id, mapping.layer)).copied()
+            .ok_or_else(|| format!(
+                "live onboard snapshot is missing original button {:#04x} layer {}",
+                mapping.button_id, mapping.layer
+            ))
     }).collect::<Result<_, _>>()?;
-    let original_mode = match device.ensure_normal_mode() {
-        Ok(mode) => mode,
-        Err(error) => {
-            let rollback = device.set_mode(saved_mode);
-            return match rollback {
-                Ok(()) => Err(format!("could not switch to normal onboard mode; original mode restored: {error}")),
-                Err(e) => Err(format!("could not switch to normal onboard mode: {error}; original mode rollback failed: {e}")),
-            };
-        }
-    };
-    let mut attempted: Vec<&RawButtonRecord> = Vec::with_capacity(mappings.len());
+
     let mut failure = None;
+    let mut attempted_originals: Vec<RawButtonRecord> = Vec::with_capacity(mappings.len());
     for (mapping, original) in mappings.iter().zip(originals.iter()) {
-        attempted.push(original);
+        // A timed-out SET may still have reached flash, so include the current
+        // record in rollback before sending the command.
+        attempted_originals.push((**original).clone());
         if let Err(error) = device.write_raw_record(mapping) {
             failure = Some(error);
             break;
         }
     }
     if failure.is_none() {
-        failure = device.verify_active_mirror(&mappings).err();
+        // Verify every requested target, not just the records that needed a
+        // SET. This also confirms the unchanged parts of the active mirror.
+        failure = device.verify_active_mirror(&targets).err();
     }
+
     if let Some(error) = failure {
         let mut rollback_errors = Vec::new();
-        let mut rollback_records: Vec<RawButtonRecord> =
-            attempted.iter().map(|record| (*record).clone()).collect();
+        // Restore only records whose SET was attempted. If a Hypershift SET
+        // may have reached flash, also write that same control's normal layer
+        // to clear the receiver's layer-status flag before considering rollback
+        // complete. This avoids touching unrelated, unattempted controls.
+        let mut rollback_records = attempted_originals;
+        let shifted_ids: BTreeSet<u8> = rollback_records.iter()
+            .filter(|record| record.layer == 1)
+            .map(|record| record.button_id)
+            .collect();
+        let mut rollback_addresses: BTreeSet<(u8, u8)> = rollback_records.iter()
+            .map(|record| (record.button_id, record.layer))
+            .collect();
+        for button_id in shifted_ids {
+            if rollback_addresses.insert((button_id, 0)) {
+                if let Some(original) = current_by_address.get(&(button_id, 0)) {
+                    rollback_records.push((**original).clone());
+                } else {
+                    rollback_errors.push(format!(
+                        "missing original normal-layer record for button {button_id:#04x} during rollback"
+                    ));
+                }
+            }
+        }
         rollback_records.sort_by_key(|record| std::cmp::Reverse(record.layer));
         for record in &rollback_records {
             if let Err(e) = device.write_raw_record(record) { rollback_errors.push(e); }
         }
         if rollback_errors.is_empty()
-            && let Err(e) = device.verify_active_mirror(&rollback_records)
+            && let Err(e) = device.verify_active_mirror(&current_records)
         {
             rollback_errors.push(e);
         }
-        if let Err(e) = device.set_mode(original_mode) { rollback_errors.push(e); }
         if rollback_errors.is_empty() {
-            return Err(format!("mapping failed and the original target records were restored: {error}"));
+            return Err(format!("mapping failed and the original live onboard records were restored: {error}"));
         }
         return Err(format!("mapping failed: {error}; rollback also had {} error(s): {}",
             rollback_errors.len(), rollback_errors.join("; ")));
     }
+
     Ok(())
 }
 
@@ -923,7 +1061,10 @@ pub fn backup_connected_mouse(path: &Path) -> Result<bool, String> {
     let device = LinuxOnboardDevice::open()?;
     let backup = device.create_backup()?;
     let complete = backup.payload.scan_complete;
-    backup.save_new(path).map_err(|e| e.to_string())?;
+    // The caller uses a Save dialog that has already asked the user before
+    // returning an existing destination. Honour that explicit choice and
+    // replace the old file atomically so the UI can continue to its review step.
+    backup.save_replace(path).map_err(|e| e.to_string())?;
     Ok(complete)
 }
 
@@ -1056,6 +1197,49 @@ mod tests {
     }
 
     #[test]
+    fn mapping_diff_skips_unchanged_records_and_schedules_layer_cleanup() {
+        let payload = complete_payload();
+        let current = payload.records.clone();
+        let mut targets = current.clone();
+
+        // A standard-only change produces one SET.
+        let standard = targets.iter_mut()
+            .find(|record| record.button_id == 0x41 && record.layer == 0)
+            .unwrap();
+        standard.bytes[6] ^= 0x01;
+
+        // A Hypershift change produces its SET plus a standard-layer SET for
+        // the same button, even though that standard binding is unchanged.
+        let hypershift = targets.iter_mut()
+            .find(|record| record.button_id == 0x40 && record.layer == 1)
+            .unwrap();
+        hypershift.bytes[6] ^= 0x01;
+
+        targets.sort_by_key(|record| std::cmp::Reverse(record.layer));
+        let changed = changed_mapping_records(&current, &targets).unwrap();
+        assert_eq!(changed.len(), 3);
+        assert_eq!((changed[0].button_id, changed[0].layer), (0x40, 1));
+        assert_eq!((changed[1].button_id, changed[1].layer), (0x40, 0));
+        assert_eq!((changed[2].button_id, changed[2].layer), (0x41, 0));
+    }
+
+    #[test]
+    fn mapping_diff_returns_empty_when_default_profile_matches_live_memory() {
+        let payload = complete_payload();
+        let changed = changed_mapping_records(&payload.records, &payload.records).unwrap();
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn mapping_diff_rejects_duplicate_target_addresses() {
+        let payload = complete_payload();
+        let mut targets = vec![payload.records[0].clone()];
+        targets.push(payload.records[0].clone());
+        let error = changed_mapping_records(&payload.records, &targets).unwrap_err();
+        assert!(error.contains("duplicate"));
+    }
+
+    #[test]
     fn swap_changes_only_auxiliary_and_wheel_tilt_actions_on_both_layers() {
         let mut payload = complete_payload();
         for record in &mut payload.records {
@@ -1175,6 +1359,25 @@ mod tests {
         assert_eq!(reply[0], COMMAND_STATUS_OK);
         assert_eq!(reads, 2, "one SET is followed by GET_REPORT polling");
         assert_eq!(pauses, [RESPONSE_POLL_WAIT]);
+    }
+
+    #[test]
+    fn response_reader_identifies_timed_out_button_and_layer() {
+        let mut request = [0u8; PAYLOAD_LEN];
+        request[1] = 0x1f;
+        request[5] = 10;
+        request[6] = CLASS_BUTTON;
+        request[7] = CMD_GET_BUTTON;
+        request[8..18].copy_from_slice(&[0x01, 0x40, 0x01, 0, 0, 0, 0, 0, 0, 0]);
+        request[88] = checksum(&request);
+        let error = wait_for_command_reply(
+            &request,
+            || Ok(response_for(&request, COMMAND_STATUS_NO_RESPONSE)),
+            |_| {},
+        ).unwrap_err();
+        assert!(error.contains("HID command 0x02/0x8c"));
+        assert!(error.contains("stored bank 1, button 0x40, layer 1"));
+        assert!(error.contains("status 0x04"));
     }
 
     #[test]
